@@ -45,13 +45,15 @@ seed: ## Populate seed data for a system, e.g. `make seed SYS=banking` (link it 
 	cp -r .seed-modules/$(SYS)/data/$(SYS) data/$(SYS)
 ```
 
-`SYS` is which seed module to run -- `banking` for this repo. The same
-target works unmodified for any future `seed-data-<sys>` submodule added
-the same way (its own `setup.sh` links itself in at
-`.seed-modules/<sys>`), so a repo that seeds multiple systems needs only
-this one generic target, not one per module. Add `.seed-modules/` to the
-parent repo's `.gitignore` -- it's local, regenerated state, not
-something to commit.
+`SYS` is which seed module to run -- `banking` for this repo, derived
+by `setup.sh` from the name of this repo's own plan file
+(`data-caterer/plan/banking.yaml` -> `banking`), not hardcoded. A future
+`seed-data-<sys>` module just needs its own `data-caterer/plan/<sys>.yaml`
+-- its `setup.sh` picks up `<sys>` automatically and links itself in at
+`.seed-modules/<sys>`, no script edits needed. So a repo that seeds
+multiple systems needs only the one generic target above, not one per
+module. Add `.seed-modules/` to the parent repo's `.gitignore` -- it's
+local, regenerated state, not something to commit.
 
 ## Layout
 
