@@ -22,6 +22,18 @@ case "$format" in
 		;;
 	sql)
 		conn_type=jdbc
+		# Without this guard, FORMAT=sql on a plan with no @@CONN_TYPE@@
+		# token silently "succeeds": the plan still literally says
+		# connection.type: "csv"/options.path, so Data Caterer writes
+		# CSVs into the ephemeral postgres container's own throwaway
+		# filesystem (never mounted for this compose service) instead
+		# of the live database -- pg_dump then produces a real-looking
+		# but completely empty <sys>.sql (CREATE DATABASE, no tables, no
+		# data), exit code 0. Confirmed directly.
+		if ! grep -q '@@CONN_TYPE@@' "data-caterer/plan/$sys.yaml"; then
+			echo "seed.sh: SYS=$sys has no FORMAT=sql support (no @@CONN_TYPE@@ token in its plan) -- see README's Postgres dump section" >&2
+			exit 1
+		fi
 		;;
 	*)
 		echo "seed.sh: unknown FORMAT=$format (expected csv or sql)" >&2

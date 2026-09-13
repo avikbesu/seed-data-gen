@@ -3,11 +3,14 @@
 Generates sample datasets using [Data Caterer
 0.19.1](https://data.catering/0.19.1/), a Spark-based data generation
 tool. Each dataset is a "system": a plan file under `data-caterer/plan/`
-plus an optional post-processing script. Ships two systems so far:
+plus an optional post-processing script. Output format is `csv` (default)
+or `sql` -- a Postgres dump -- via `FORMAT=csv|sql` (see "Postgres dump"
+below); `sql` support is currently plan-by-plan, not automatic for every
+system. Ships two systems so far:
 
 - `banking` -- a simplified banking dataset (party, party_address,
   party_contact, party_profile, accounts, account_contracts,
-  transactions).
+  transactions). Supports `FORMAT=sql`.
 - `retail` -- a simplified retail store dataset (customer, supplier,
   product, employee, shift_roster, order, order_item, invoice).
 
@@ -26,7 +29,8 @@ make seed SYS=retail
 ```
 
 Output lands in `data/<sys>/` (gitignored) -- one clean CSV file per
-table, with a header row and no leftover Spark part-files.
+table, with a header row and no leftover Spark part-files. This is
+`FORMAT=csv`, the default -- see "Postgres dump" below for `FORMAT=sql`.
 
 ## Postgres dump (`FORMAT=sql`)
 
@@ -56,11 +60,20 @@ any matching-named dataSource, breaking `FORMAT=csv` if left in
 unconditionally -- confirmed directly). See `banking.yaml`'s header
 comment for the full rationale and every finding along the way.
 
-Only `banking` has Postgres support today. Adding it for another system
-means adding `csv:`/`sql:` sub-keys to each step's `options:` and
-templating `connection.type` the same way -- see `banking.yaml` as the
-reference -- plus, if needed, a fixup under
-`data-caterer/postprocess/sql/<sys>.sql`.
+Only `banking` has Postgres support today. `FORMAT=sql` on a plan with no
+`@@CONN_TYPE@@` token (like `retail`) fails fast with a clear error
+before touching Docker -- `data-caterer/script/seed.sh` checks for it up
+front, because without that check the plan still literally says
+`connection.type: "csv"`/`options.path`, so Data Caterer writes CSVs into
+the ephemeral Postgres container's own throwaway filesystem (never
+mounted for that compose service) instead of the database, and `pg_dump`
+produces a real-looking but completely empty `<sys>.sql` -- confirmed
+directly, exit code 0 either way without the guard.
+
+Adding Postgres support for another system means adding `csv:`/`sql:`
+sub-keys to each step's `options:` and templating `connection.type` the
+same way -- see `banking.yaml` as the reference -- plus, if needed, a
+fixup under `data-caterer/postprocess/sql/<sys>.sql`.
 
 ## Adding a system
 
@@ -95,19 +108,25 @@ inline -- everything else in the target follows from that:
 
 ```makefile
 SEED_MODULE := seed-data-gen
+FORMAT ?= csv
 
-seed: ## Populate seed data for a system, e.g. `make seed SYS=banking`
-	@test -n "$(SYS)" || { echo "usage: make seed SYS=<system>  (e.g. SYS=banking)" >&2; exit 1; }
+seed: ## Populate seed data for a system, e.g. `make seed SYS=banking` (or FORMAT=sql, for systems that support it)
+	@test -n "$(SYS)" || { echo "usage: make seed SYS=<system> [FORMAT=csv|sql]  (e.g. SYS=banking)" >&2; exit 1; }
 	git submodule update --init $(SEED_MODULE)
 	@test -f $(SEED_MODULE)/data-caterer/plan/$(SYS).yaml || { echo "seed: no plan for SYS=$(SYS) (expected $(SEED_MODULE)/data-caterer/plan/$(SYS).yaml)" >&2; exit 1; }
-	$(MAKE) -C $(SEED_MODULE) seed SYS=$(SYS)
+	$(MAKE) -C $(SEED_MODULE) seed SYS=$(SYS) FORMAT=$(FORMAT)
 	mkdir -p data
 	cp -r $(SEED_MODULE)/data/$(SYS) data/$(SYS)
 ```
 
 Works unmodified for every system this module provides, present or
-future. `$(SEED_MODULE)` must match wherever `git submodule add` actually
-checked this out; update it there if the submodule moves.
+future -- `FORMAT` just passes through, and `data/$(SYS)/` holds whatever
+that run produced (CSVs, or a single `$(SYS).sql` for `FORMAT=sql`).
+`$(SEED_MODULE)` must match wherever `git submodule add` actually checked
+this out; update it there if the submodule moves. `FORMAT=sql` for a
+system that doesn't support it (no `@@CONN_TYPE@@` token in its plan)
+fails fast with a clear error, before touching Docker -- see "Postgres
+dump" above.
 
 The `cp` step is optional -- skip it and point consumers at
 `$(SEED_MODULE)/data/$(SYS)/` directly if you don't need a stable
