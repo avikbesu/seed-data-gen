@@ -6,7 +6,7 @@
 # This resolves its own real location via BASH_SOURCE, not the caller's
 # current directory or any hardcoded name -- so it works no matter what
 # directory name or nesting depth this repo is checked out under, e.g.
-# as a git submodule added at a path other than "seed-data-banking".
+# as a git submodule added at a path other than "seed-data-gen".
 #
 # One symlink is created per system this module provides -- one per
 # data-caterer/plan/<sys>.yaml file, so a single module can serve
@@ -24,7 +24,7 @@
 # parent-side Makefile snippet.
 #
 # Usage (run once, from the target repo root, after `git submodule add`):
-#   ./path/to/seed-data-banking/setup.sh [target-repo-root]
+#   ./path/to/seed-data-gen/setup.sh [target-repo-root]
 # target-repo-root defaults to the current directory.
 set -euo pipefail
 

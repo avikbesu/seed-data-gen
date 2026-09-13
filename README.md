@@ -1,4 +1,4 @@
-# seed-data-banking
+# seed-data-gen
 
 Generates sample datasets as CSV files using [Data Caterer
 0.19.1](https://data.catering/0.19.1/), a Spark-based data generation
@@ -61,13 +61,13 @@ have one.
 ## As a submodule
 
 ```
-git submodule add https://github.com/avikbesu/seed-data-banking.git seed-data-banking
+git submodule add https://github.com/avikbesu/seed-data-gen.git seed-data-gen
 ```
 
 The path you give `git submodule add` is just a suggestion -- nothing in
 this repo depends on it, and nothing in the parent repo should hardcode
 it either (submodules get renamed/moved). Instead, run `setup.sh` once
-from the parent repo's root (`./path/to/seed-data-banking/setup.sh`,
+from the parent repo's root (`./path/to/seed-data-gen/setup.sh`,
 wherever the submodule actually landed) -- it's self-locating (resolves
 every path from its own location via `BASH_SOURCE`), and it links itself
 into the parent repo at a fixed, predictable path per system it finds:
