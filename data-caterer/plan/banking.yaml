@@ -2,118 +2,98 @@
 # https://data.catering/0.19.1/ and docker/docker-compose.seed.yaml).
 #
 # Schema:
-#   party            -- one row per party (person), FK to a contact record
-#                        (1:1) and to an address drawn from a shared pool
-#   party_address    -- independent pool of postal addresses (not 1:1 with
-#                        party -- see note below)
+#   party            -- one row per party (person); FK to a contact
+#                        record (1:1) and an address from a shared pool
+#   party_address    -- independent address pool, not 1:1 with party
 #   party_contact    -- phone/email/preferred-contact-method details
-#   party_profile    -- a banking profile a party can hold (purpose, risk
-#                        rating) -- independent of party; linked via
-#                        account_contracts
+#   party_profile    -- a banking profile a party can hold; independent
+#                        of party, linked via account_contracts
 #   accounts         -- one row per bank account
-#   account_contracts -- junction table: which party (under which profile)
-#                        holds which account, and in what role
+#   account_contracts -- junction: which party/profile holds which
+#                        account, and in what role
 #   transactions     -- one row per transaction against an account
 #
-# All date/timestamp fields represent Australia/Sydney wall-clock time (a
-# generation-range convention -- CSV carries no timezone metadata).
+# Date/timestamp fields are Australia/Sydney wall-clock time. No
+# sinkOptions.seed is set on purpose -- every run produces a different
+# dataset.
 #
-# No sinkOptions.seed is set on purpose -- every run should produce a
-# different dataset (per the request this was built for), not a
-# reproducible one.
+# **Two formats, one dataSources entry**: `make seed SYS=banking`
+# (FORMAT=csv, default) writes CSVs; `FORMAT=sql` generates the same data
+# into an ephemeral Postgres and pg_dumps it (see
+# data-caterer/script/seed.sh). Every field is defined exactly once; only
+# `connection.type: "@@CONN_TYPE@@"` and each step's `options: {csv:
+# {...}, sql: {...}}` are resolved at render time, not duplicated:
+#
+#   - seed.sh substitutes `@@CONN_TYPE@@` to `"csv"`/`"jdbc"` (Spark's
+#     real JDBC format name -- `"postgres"` is not real and fails with
+#     `ClassNotFoundException: postgres.DefaultSource`, confirmed
+#     directly). Real connection details can't be inlined here at all
+#     (confirmed: `key not found: driver` then `Option 'url' is
+#     required`) -- they live in application.conf.template's `jdbc {
+#     banking {...} }` block, merged in by matching this entry's `name`.
+#
+#   - `data-caterer/script/hoist.awk` drops the inactive format's whole
+#     `csv:`/`sql:` block and de-indents the active one's children up to
+#     be direct children of `options:`, the flat shape Data Caterer
+#     expects. This de-nesting is necessary, not cosmetic: a `jdbc` step
+#     left with a `path`/`header` key present alongside `dbtable` doesn't
+#     error, but Data Caterer's file-consolidation logic still fires on
+#     `path` and writes a real, non-empty, spurious CSV file as a side
+#     effect (confirmed directly).
+#
+# This replaced two fully duplicated `dataSources` entries kept in sync
+# by hand, because Data Caterer's YAML parser doesn't support
+# anchors/aliases (confirmed: even a trivial `fields: &x`/`*x` test fails
+# with `MismatchedInputException: Cannot deserialize List<UnifiedField>
+# from String value`).
 #
 # **Real Data Caterer 0.19.1 bugs found while building this plan** (all
 # confirmed directly against the real image, not assumptions):
 #
-#   1. When more than one separate `foreignKeys` list entry targets the
-#      same step, only the first one actually gets applied; every other
-#      targeted field silently falls back to random default values instead
-#      of real parent keys.
-#      Worked around: 1:1 relationships (party <-> its contact) use
-#      matching `incremental` sequences instead of a `foreignKeys` block.
-#      Every genuine one-to-many relationship below (accounts ->
-#      account_contracts, accounts -> transactions) uses its own single
-#      `foreignKeys` entry targeting a distinct step, so there's never more
-#      than one entry targeting the same step.
+#   1. More than one `foreignKeys` entry targeting the same step: only
+#      the first applies, others fall back to random values.
+#      Worked around: 1:1s (party <-> contact) use matching `incremental`
+#      sequences instead of `foreignKeys`; each one-to-many below targets
+#      a distinct step.
 #
-#   2. `cardinality` (`min`/`max`/`ratio`) on a `foreignKeys` relationship
-#      does not expand the child step's row count -- it silently collapses
-#      to a 1:1 mapping with the parent regardless of what's configured.
-#      Worked around: row-count expansion is driven by the child's own
-#      `count.perField` instead (the other documented mechanism for
-#      "N records per group of field values" -- confirmed to actually work).
+#   2. `cardinality` (`min`/`max`/`ratio`) on `foreignKeys` doesn't expand
+#      the child's row count -- collapses to 1:1 regardless.
+#      Worked around: `count.perField` on the child step instead (works,
+#      though see "known limitation" in data-caterer/README.md -- it's
+#      one flat count per parent, not a real range, for either format).
 #
-#   3. Adding ANY `foreignKeys` entry targeting a given step -- even a
-#      single one, so bug 1 above doesn't apply -- silently forces EVERY
-#      OTHER foreignKeys-target step in the WHOLE plan to inflate its row
-#      count to match that new entry's source step. Found by giving `party`
-#      a real `foreignKeys` relationship to the 20,000-row `party_address`
-#      pool: party itself ballooned from 500 to 20,000 rows, and
-#      account_contracts/transactions (unrelated relationships, completely
-#      unchanged) ballooned from a few hundred/thousand rows to 60,000
-#      each. Confirmed by direct row-count of the generated CSVs before
-#      and after adding/removing that one relationship.
-#      Worked around: `party.address_id` uses a deterministic SQL hash of
-#      its own `seq` into party_address's known `ADR<8-digit-seq>` id
-#      format instead of a `foreignKeys` relationship -- see that field's
-#      own comment below.
+#   3. Adding any `foreignKeys` entry targeting a step inflates every
+#      OTHER foreignKeys-target step's row count to match its source
+#      step (found giving `party` a real FK to the 20,000-row
+#      `party_address` pool: party ballooned to 20,000 rows, unrelated
+#      account_contracts/transactions to 60,000 each).
+#      Worked around: `party.address_id` is a deterministic SQL hash of
+#      `seq` into `party_address`'s `ADR<8-digit-seq>` id format instead.
 #
-#   4. A weighted `oneOf` (the `"value->0.35"` syntax) always returns the
-#      LAST listed alternative, for every single row -- confirmed across
-#      every weighted field in this plan (country, currency, account_type,
-#      contact method, boolean flags, etc.), while an *unweighted* `oneOf`
-#      (a plain list with no `->weight`) generates a normal, correctly
-#      varied distribution. Confirmed by checking the actual value
-#      distribution in the generated CSVs, not just that generation
-#      succeeded.
-#      Worked around: every field that needs realistic weighted
-#      probabilities uses a hidden `<field>_bucket` (a `double` field, range
-#      0.0-1.0, `omit: true`) plus a `sql` field with a `CASE` expression
-#      keyed off cumulative thresholds on that bucket value -- confirmed to
-#      produce a real, correctly-weighted distribution (see e.g.
-#      account_contracts.contract_role below, or any `_bucket` field).
+#   4. A weighted `oneOf` (`"value->0.35"`) always returns the LAST
+#      alternative, every row (confirmed via generated-value distribution).
+#      Worked around: a hidden `<field>_bucket` double (`omit: true`) +
+#      `sql` `CASE` on cumulative thresholds instead.
 #
-#   5. A field's `sql` cannot see the real value of another field in the
-#      same step that is itself populated via `foreignKeys` -- the
-#      foreignKeys post-processing pass overwrites that field's value
-#      AFTER every per-row `sql` field in the step has already been
-#      evaluated against its placeholder value. Found trying to make
-#      account_contracts.contract_role loan-vs-other aware by extracting
-#      account_type back out of accounts_key (itself populated via
-#      foreignKeys) with `SUBSTRING`: the loan branch never fired, for any
-#      row, in any run -- confirmed by checking the actual role
-#      distribution against each contract's real parent account_type in
-#      the generated CSVs.
-#      Worked around: this can't be fixed inside the plan at all (it's the
-#      tool's generation order, not a syntax issue) -- contract_role below
-#      is generated as a flat weighted pick with no loan-awareness, and
-#      postprocess/banking.sh runs automatically after generation (see
-#      `make seed`'s target) and swaps 'Power of Attorney' to
-#      'Guarantor' wherever the parent account's account_type is 'Loan'.
+#   5. A field's `sql` can't see another same-step field's real value
+#      once that field is populated via `foreignKeys` (evaluated before
+#      the FK pass overwrites it) -- tried making
+#      account_contracts.contract_role loan-aware this way; never fired.
+#      Can't be fixed in-plan -- contract_role is a flat weighted pick,
+#      fixed up after generation by
+#      data-caterer/postprocess/csv/banking.sh (FORMAT=csv) or
+#      data-caterer/postprocess/sql/banking.sql (FORMAT=sql, via psql).
 #
-#   6. A string literal inside one field's `sql` that exactly matches
-#      another field's name in the same step gets corrupted -- found when
-#      `method`'s CASE had a `'merchant'` branch value in the same step as
-#      an (originally named) `merchant` field: every row that should have
-#      been `'merchant'` came out as the literal text `` `_temp_merchant` ``
-#      in the generated CSV (Data Caterer's internal `_temp_<fieldname>`
-#      substitution isn't scoped to SQL string literals vs. identifiers).
-#      Worked around: renamed the field to `merchant_name` -- no fix
-#      needed on the `method` side, since the value and the *other*
-#      field's name no longer match exactly.
+#   6. A string literal in one field's `sql` exactly matching another
+#      field's name in the same step gets corrupted (found: a `'merchant'`
+#      CASE branch became the literal text `_temp_merchant` once a field
+#      was also named `merchant`).
+#      Worked around: renamed the field to `merchant_name`.
 #
-# **party_address is a standalone 20,000-row address pool, not 1:1 with
-# party** -- party (500 rows) picks one `address_id` per row via the
-# deterministic-hash workaround for bug 3 above, not a real relationship.
-# Multiple parties can therefore share the same address; not every address
-# in the pool is guaranteed to be referenced. Good enough for sample data.
-#
-# **account_contracts.contract_role's loan-vs-other split happens outside
-# this plan entirely** -- see bug 5 above. accounts.id still embeds a
-# 2-letter account_type code right after the `ACC` prefix (e.g.
-# `ACCLN00000001` for Loan) purely so postprocess/banking.sh's `awk`
-# step can recover each contract's parent account_type from accounts.csv
-# without a real join.
+# `party_address` is a standalone 20,000-row pool (party's 500 rows share
+# addresses via the bug-3 workaround, not a real relationship). `accounts.id`
+# embeds a 2-letter account_type code after the `ACC` prefix purely so the
+# postprocess step (bug 5) can recover it without a real join.
 version: "1.0"
 name: "banking_sample_data"
 description: "Simplified banking system sample data with intact party/account/transaction relationships"
@@ -128,17 +108,20 @@ config:
     generatedReportsFolderPath: "/opt/app/data/report"
 
 dataSources:
-  - name: "banking_csv"
+  - name: "banking"
     connection:
-      type: "csv"
+      type: "@@CONN_TYPE@@"
     steps:
       # ----- party_address ------------------------------------------------
       # Standalone pool -- 20,000 addresses, not 1:1 with party. See the
       # file-level comment for why and how party.address_id references it.
       - name: "party_address"
         options:
-          path: "/opt/app/data/banking/party_address.csv"
-          header: true
+          csv:
+            path: "/opt/app/data/banking/party_address.csv"
+            header: true
+          sql:
+            dbtable: "party_address"
         count:
           records: 20000
         fields:
@@ -191,8 +174,11 @@ dataSources:
       # ----- party_contact --------------------------------------------------
       - name: "party_contact"
         options:
-          path: "/opt/app/data/banking/party_contact.csv"
-          header: true
+          csv:
+            path: "/opt/app/data/banking/party_contact.csv"
+            header: true
+          sql:
+            dbtable: "party_contact"
         count:
           records: 500
         fields:
@@ -283,8 +269,11 @@ dataSources:
       # both.
       - name: "party"
         options:
-          path: "/opt/app/data/banking/party.csv"
-          header: true
+          csv:
+            path: "/opt/app/data/banking/party.csv"
+            header: true
+          sql:
+            dbtable: "party"
         count:
           records: 500
         fields:
@@ -372,8 +361,11 @@ dataSources:
       # ----- party_profile ---------------------------------------------------
       - name: "party_profile"
         options:
-          path: "/opt/app/data/banking/party_profile.csv"
-          header: true
+          csv:
+            path: "/opt/app/data/banking/party_profile.csv"
+            header: true
+          sql:
+            dbtable: "party_profile"
         count:
           records: 600
         fields:
@@ -411,8 +403,11 @@ dataSources:
       # accounts_key without a cross-step join -- see the file-level comment.
       - name: "accounts"
         options:
-          path: "/opt/app/data/banking/accounts.csv"
-          header: true
+          csv:
+            path: "/opt/app/data/banking/accounts.csv"
+            header: true
+          sql:
+            dbtable: "accounts"
         count:
           records: 400
         fields:
@@ -537,22 +532,19 @@ dataSources:
               sql: "CASE WHEN closed = 'true' THEN close_date_raw ELSE NULL END"
 
       # ----- account_contracts ------------------------------------------------
-      # Junction table: links an account, the party holding it, and which
-      # profile the party is holding it under.
-      #
-      # accounts_key is the one genuine one-to-many relationship here (1-3
-      # contracts per account, e.g. joint accounts) -- populated via the
-      # foreignKeys block below, with row-count expansion driven by
-      # `count.perField` (the only combination confirmed to work -- see the
-      # file-level comment). party_key/party_profile_key are populated by
-      # cycling deterministically through party/party_profile's own
-      # `incremental` ranges (500 and 600 respectively) via modulo -- every
-      # value this produces is guaranteed to exist in the parent table,
-      # just not randomly sampled the way accounts_key is.
+      # Junction: which party/profile holds which account, in what role.
+      # accounts_key is the one genuine one-to-many here (1-3/account, via
+      # foreignKeys + count.perField -- see bug 2). party_key/
+      # party_profile_key cycle deterministically through party/
+      # party_profile's own ranges via modulo instead -- always a real
+      # parent value, just not randomly sampled.
       - name: "account_contracts"
         options:
-          path: "/opt/app/data/banking/account_contracts.csv"
-          header: true
+          csv:
+            path: "/opt/app/data/banking/account_contracts.csv"
+            header: true
+          sql:
+            dbtable: "account_contracts"
         count:
           records: 400
           perField:
@@ -587,8 +579,8 @@ dataSources:
               max: 1.0
           - name: "contract_role"
             # Flat weighted pick -- Power of Attorney here becomes
-            # Guarantor for Loan accounts via postprocess/banking.sh,
-            # not here. See bug 5 in the file-level comment for why this
+            # Guarantor for Loan accounts via a postprocess step, not
+            # here. See bug 5 in the file-level comment for why this
             # can't be done in-plan.
             options:
               sql: >-
@@ -629,8 +621,11 @@ dataSources:
       # foreignKeys-plus-count.perField pattern as account_contracts above.
       - name: "transactions"
         options:
-          path: "/opt/app/data/banking/transactions.csv"
-          header: true
+          csv:
+            path: "/opt/app/data/banking/transactions.csv"
+            header: true
+          sql:
+            dbtable: "transactions"
         count:
           records: 400
           perField:
@@ -729,13 +724,7 @@ dataSources:
               expression: "#{Company.name}"
           - name: "merchant_name"
             # only populated for payment/withdrawal transactions. Named
-            # merchant_name, not merchant, to avoid an exact-string
-            # collision with the literal 'merchant' value in method's CASE
-            # above -- Data Caterer's internal `_temp_<fieldname>`
-            # substitution isn't scoped to identifiers, so a field named
-            # exactly `merchant` silently corrupted that string literal
-            # into the literal text `_temp_merchant` in method's output.
-            # Confirmed via the generated CSV, not just a hunch.
+            # merchant_name, not merchant, per bug 6 above.
             options:
               sql: "CASE WHEN transaction_type IN ('payment', 'withdrawal') THEN merchant_raw ELSE NULL END"
           - name: "description"
@@ -745,20 +734,20 @@ dataSources:
 foreignKeys:
   # accounts -> account_contracts (1-3 contracts per account, e.g. joint accounts)
   - source:
-      dataSource: "banking_csv"
+      dataSource: "banking"
       step: "accounts"
       fields: ["id"]
     generate:
-      - dataSource: "banking_csv"
+      - dataSource: "banking"
         step: "account_contracts"
         fields: ["accounts_key"]
 
   # accounts -> transactions (5-50 transactions per account)
   - source:
-      dataSource: "banking_csv"
+      dataSource: "banking"
       step: "accounts"
       fields: ["id"]
     generate:
-      - dataSource: "banking_csv"
+      - dataSource: "banking"
         step: "transactions"
         fields: ["accounts_FK"]

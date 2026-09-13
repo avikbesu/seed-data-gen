@@ -1,6 +1,6 @@
 # seed-data-gen
 
-Generates sample datasets as CSV files using [Data Caterer
+Generates sample datasets using [Data Caterer
 0.19.1](https://data.catering/0.19.1/), a Spark-based data generation
 tool. Each dataset is a "system": a plan file under `data-caterer/plan/`
 plus an optional post-processing script. Ships two systems so far:
@@ -28,35 +28,61 @@ make seed SYS=retail
 Output lands in `data/<sys>/` (gitignored) -- one clean CSV file per
 table, with a header row and no leftover Spark part-files.
 
+## Postgres dump (`FORMAT=sql`)
+
+```
+make seed SYS=banking FORMAT=sql
+```
+
+`FORMAT` defaults to `csv`. `FORMAT=sql` starts an ephemeral Postgres
+container, generates the same dataset directly into it, applies that
+system's SQL fixup if present (`data-caterer/postprocess/sql/<sys>.sql`),
+runs `pg_dump` into `data/<sys>/<sys>.sql` (`CREATE DATABASE`/`CREATE
+TABLE` plus an `INSERT` per row), then tears the container down. Never
+reachable outside Docker (no host port published), never persists past
+one run.
+
+Both formats live in ONE `dataSources` entry per plan -- no duplicated
+fields or `foreignKeys`. `connection.type: "@@CONN_TYPE@@"` and each
+step's `options: {csv: {...}, sql: {...}}` are resolved at render time by
+`data-caterer/script/seed.sh`: substitutes `@@CONN_TYPE@@` to
+`csv`/`jdbc` (`"jdbc"` is Spark's real format name), then
+`data-caterer/script/hoist.awk` drops the inactive format's block and
+de-indents the active one's children into the flat `options:` shape Data
+Caterer expects. Real jdbc credentials live in
+`data-caterer/application-jdbc.conf.template`, appended only for
+`FORMAT=sql` (a `jdbc {}` block merely existing forces jdbc validation on
+any matching-named dataSource, breaking `FORMAT=csv` if left in
+unconditionally -- confirmed directly). See `banking.yaml`'s header
+comment for the full rationale and every finding along the way.
+
+Only `banking` has Postgres support today. Adding it for another system
+means adding `csv:`/`sql:` sub-keys to each step's `options:` and
+templating `connection.type` the same way -- see `banking.yaml` as the
+reference -- plus, if needed, a fixup under
+`data-caterer/postprocess/sql/<sys>.sql`.
+
 ## Adding a system
 
 Drop in a new `data-caterer/plan/<sys>.yaml` and `make seed SYS=<sys>`
-works immediately -- nothing else needs editing. Its steps' output
-`path`s must write under `/opt/app/data/<sys>/` to match the volume
-mount in `docker/docker-compose.seed.yaml`.
+works immediately. Its steps' CSV output paths must write under
+`/opt/app/data/<sys>/` to match the volume mount in
+`docker/docker-compose.seed.yaml`.
 
-For the plan format and Data Caterer gotchas, see `banking.yaml`'s
-header comment (the full list of real bugs found, e.g. why a weighted
-`oneOf` can't be trusted) and `retail.yaml`'s header comment (why it
-uses NO real `foreignKeys` block at all despite having several
-many-to-one relationships -- including a genuine one-to-many that
-started out using `foreignKeys` + `count.perField` and was rebuilt
-deterministic after that only covered ~25% of parent rows in testing --
-and the deterministic-reference techniques, including a closed-form
-cumulative-sum encoding for the one-to-many case, it uses instead).
-Whatever you add, verify it directly against the real image (`make seed
-SYS=<sys>`, then check row counts and that every FK-shaped value
-resolves to a real parent row) rather than assuming Data Caterer's
-documented behavior holds -- both existing plans found real
-discrepancies this way.
+See `banking.yaml`'s and `retail.yaml`'s header comments for the plan
+format and every real Data Caterer gotcha found building them (weighted
+`oneOf` unreliability, `foreignKeys` row-count quirks, deterministic
+alternatives to `foreignKeys`, etc.). Verify anything new directly
+against the real image (row counts, FK resolution) rather than trusting
+Data Caterer's docs -- both existing plans found real discrepancies this
+way.
 
-If the plan needs fix-up that Data Caterer can't express (like
-banking's loan-only Guarantor rule, or retail's cross-step amount
-syncing -- see `data-caterer/README.md` and `postprocess/retail.sh`
-respectively), add an executable `data-caterer/postprocess/<sys>.sh`;
-the `seed` target runs it automatically after generation, passing the
-output directory as `$1`. A system with nothing to fix up just doesn't
-have one.
+If the plan needs fix-up Data Caterer can't express (banking's
+loan-only Guarantor rule, retail's cross-step amount syncing), add an
+executable `data-caterer/postprocess/csv/<sys>.sh`; `make seed` runs it
+automatically after generation (FORMAT=csv; see the Postgres dump section
+for FORMAT=sql's equivalent), passing the output directory as `$1`. A
+system with nothing to fix up just doesn't have one.
 
 ## As a submodule
 
@@ -79,30 +105,34 @@ seed: ## Populate seed data for a system, e.g. `make seed SYS=banking`
 	cp -r $(SEED_MODULE)/data/$(SYS) data/$(SYS)
 ```
 
-This one target works unmodified for every system this module provides,
-present or future -- no per-system Makefile logic needed. `$(SEED_MODULE)`
-must match wherever `git submodule add` actually checked this out; update
-it there if the submodule is ever moved or renamed.
+Works unmodified for every system this module provides, present or
+future. `$(SEED_MODULE)` must match wherever `git submodule add` actually
+checked this out; update it there if the submodule moves.
 
-The `cp` step is optional -- skip `mkdir -p data` / `cp -r ...` and point
-consumers at `$(SEED_MODULE)/data/$(SYS)/` directly if you don't need a
-stable `data/<sys>` path decoupled from the submodule's own location.
+The `cp` step is optional -- skip it and point consumers at
+`$(SEED_MODULE)/data/$(SYS)/` directly if you don't need a stable
+`data/<sys>` path decoupled from the submodule's own location.
 
 ## Layout
 
-- `docker/docker-compose.seed.yaml` -- one-shot `docker compose run --rm`
-  service definition for the Data Caterer image, parameterized by `SYS`.
+- `docker/docker-compose.seed.yaml` -- one-shot service for `FORMAT=csv`,
+  parameterized by `SYS`.
+- `docker/docker-compose.postgres.yaml` -- ephemeral `postgres` +
+  `data-caterer` services for `FORMAT=sql`, torn down every run.
+- `data-caterer/script/seed.sh` -- the `make seed` implementation: renders
+  the plan and application.conf, then runs the right docker-compose flow.
+- `data-caterer/script/hoist.awk` -- resolves each step's
+  `options.csv`/`options.sql` to the flat shape Data Caterer expects.
 - `data-caterer/application.conf.template` -- Spark runtime defaults
-  (HOCON), shared by every system. Rendered into `application.conf`
-  (gitignored) each run by `make seed SYS=<sys>`.
-- `data-caterer/plan/<sys>.yaml` -- one per system: the schema, fields,
-  and relationships. `banking.yaml`'s header comment has the full design
-  rationale, including every real Data Caterer bug found while building
-  it and how each is worked around.
-- `data-caterer/postprocess/<sys>.sh` -- optional, one per system that
-  needs it: fix-up Data Caterer can't express in the plan itself.
-- `data-caterer/README.md` -- detailed notes on the banking dataset
-  shape and the Data Caterer 0.19.1 issues worked around in its plan.
-
-See `data-caterer/README.md` for the full schema notes and known Data
-Caterer issues.
+  (HOCON), rendered into `application.conf` (gitignored) each run.
+- `data-caterer/application-jdbc.conf.template` -- real Postgres
+  connection details, appended only for `FORMAT=sql`.
+- `data-caterer/plan/<sys>.yaml` -- one per system: schema, fields, and
+  relationships as one `dataSources` entry, rendered into
+  `data-caterer/plan/.rendered/<sys>.yaml` (gitignored) before every run.
+  `banking.yaml`'s header comment has the full design rationale.
+- `data-caterer/postprocess/csv/<sys>.sh` -- optional `FORMAT=csv` fixup.
+- `data-caterer/postprocess/sql/<sys>.sql` -- the `FORMAT=sql` equivalent,
+  run via `psql` against the live database.
+- `data-caterer/README.md` -- detailed notes on the banking dataset shape
+  and the Data Caterer 0.19.1 issues worked around in its plan.

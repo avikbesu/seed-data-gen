@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Post-processing for SYS=banking, run automatically by the Makefile's
-# `seed` target after Data Caterer finishes (see that target -- it looks
-# for an executable script here named <sys>.sh and runs it if present;
-# a system with nothing to fix up just doesn't have one).
+# Post-processing for SYS=banking, run automatically by
+# data-caterer/script/seed.sh after Data Caterer finishes (FORMAT=csv;
+# a system with nothing to fix up just doesn't have one here).
 #
 # Data Caterer can't make account_contracts.contract_role loan-aware
 # itself (a field's `sql` can't see another field's real foreignKeys

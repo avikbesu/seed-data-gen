@@ -1,0 +1,39 @@
+# Ephemeral Postgres target, parameterized by SYS -- data-caterer/script/seed.sh
+# (FORMAT=sql) starts `postgres` here, runs Data Caterer against the
+# rendered plan/.rendered/${SYS}.yaml (see banking.yaml's own comment),
+# pg_dumps the result, then tears everything down (`docker compose ...
+# down -v`). Never run via `up -d` on its own for anything long-lived.
+#
+# No host port published -- data-caterer reaches `postgres` by service
+# name over this compose file's own network, and seed.sh talks to it via
+# `docker compose exec`, never the host network. Fixed dev credentials
+# are fine: never reachable outside Docker, never persists past one run.
+services:
+  postgres:
+    image: "postgres:16.4"
+    environment:
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "postgres"
+      POSTGRES_DB: "${SYS:?SYS is required, e.g. SYS=banking}"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${SYS}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  data-caterer:
+    image: "datacatering/data-caterer:0.19.1"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APPLICATION_CONFIG_PATH: "/opt/app/custom/application.conf"
+      PLAN_FILE_PATH: "/opt/app/custom/plan/.rendered/${SYS:?SYS is required, e.g. SYS=banking}.yaml"
+      ENABLE_GENERATE_DATA: "true"
+      ENABLE_RECORD_TRACKING: "false"
+      ENABLE_GENERATE_PLAN_AND_TASKS: "false"
+      ENABLE_DELETE_GENERATED_RECORDS: "false"
+      DRIVER_MEMORY: "2g"
+      EXECUTOR_MEMORY: "2g"
+    volumes:
+      - "../data-caterer:/opt/app/custom"

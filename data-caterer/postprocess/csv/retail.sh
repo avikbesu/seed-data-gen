@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Post-processing for SYS=retail, run automatically by the Makefile's
-# `seed` target after Data Caterer finishes (see that target -- it looks
-# for an executable script here named <sys>.sh and runs it if present).
+# Post-processing for SYS=retail, run automatically by
+# data-caterer/script/seed.sh after Data Caterer finishes (FORMAT=csv).
 #
 # A field's `sql` can only see other fields in its own row of its own
 # step -- it can't reach into another step's rows (see plan/retail.yaml's

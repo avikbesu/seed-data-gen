@@ -1,139 +1,95 @@
 # Banking sample data generator
 
-Generates a simplified, relationally-intact banking dataset as CSV files
-using [Data Caterer 0.19.1](https://data.catering/0.19.1/), a Spark-based
-data generation tool. Run via `make seed SYS=banking` from the repo root
-(`banking` is this system's name -- see the top-level README for how
-that maps to `plan/banking.yaml`).
+Generates a simplified, relationally-intact banking dataset using [Data
+Caterer 0.19.1](https://data.catering/0.19.1/). Run via `make seed
+SYS=banking` (CSV) or `make seed SYS=banking FORMAT=sql` (Postgres dump)
+from the repo root.
 
 ## Layout
 
 - `application.conf.template` -- Spark runtime defaults (HOCON), shared
-  by every system. `make seed SYS=<sys>` renders this into
-  `application.conf` (gitignored) each run, substituting `@@SYS@@` --
-  see that template's header comment for why this is templated rather
-  than static. Data Caterer's config parser requires the full
-  `flags`/`folders`/etc. block shape even for a CSV-only run;
-  `../docker/docker-compose.seed.yaml` mounts this whole directory at
-  `/opt/app/custom`.
-- `plan/banking.yaml` -- the actual schema: 7 tables (`party`,
-  `party_address`, `party_contact`, `party_profile`, `accounts`,
-  `account_contracts`, `transactions`), their fields, and the
-  relationships between them. See that file's own header comment for the
-  full design rationale, including every real Data Caterer bug found
-  while building it (six, as of this writing) and how each is worked
-  around.
+  by every system, rendered into `application.conf` (gitignored) each run
+  with `@@SYS@@` substituted. `application-jdbc.conf.template` adds the
+  real Postgres connection details, appended only for `FORMAT=sql`.
+- `plan/banking.yaml` -- the schema (7 tables: `party`, `party_address`,
+  `party_contact`, `party_profile`, `accounts`, `account_contracts`,
+  `transactions`), fields, and relationships, for both formats. See that
+  file's own header comment for the full design rationale, every real
+  Data Caterer bug found building it, and how each is worked around.
 
-  `party_address` is a standalone 20,000-row address pool (not 1:1 with
-  `party`'s 500 rows), weighted AU 60% / NZ 30% / {US, UK, NL, IN} 10%
-  split evenly. `account_contracts.contract_role` is loan-aware
-  (`Guarantor` only for Loan accounts, `Power of Attorney` for every
-  other type) -- enforced by `postprocess/banking.sh`, run automatically
-  by `make seed` after generation, not by the plan itself (see bug 5 in
-  the plan's header comment).
+  `party_address` is a standalone 20,000-row pool (not 1:1 with `party`'s
+  500 rows), weighted AU 60% / NZ 30% / {US, UK, NL, IN} 10% split evenly.
+  `account_contracts.contract_role` is loan-aware (`Guarantor` only for
+  Loan accounts) -- enforced by `postprocess/csv/banking.sh` or
+  `postprocess/sql/banking.sql` after generation, not by the plan itself
+  (bug 5 below).
 
-Output lands in `data/banking/` at the repo root (gitignored, like
-`watch/`/`state/`) -- one clean CSV file per table, with a header row and
-no leftover Spark part-files (Data Caterer consolidates automatically
-when a step's `path` ends in `.csv`).
+Output lands in `data/banking/` (gitignored) -- CSVs for `FORMAT=csv`, one
+`banking.sql` dump for `FORMAT=sql`.
 
 ## Known Data Caterer 0.19.1 issues worked around here
 
-Found by testing directly against the real image before writing the final
-plan -- not assumptions, not present in the official docs' own examples
-(which never combine these particular shapes):
+Found by testing directly against the real image, not assumed and not
+present in the official docs' own examples:
 
-1. **Multiple `foreignKeys` list entries targeting the same step silently
-   collide.** Only the first one actually populates its target field with
-   real parent values; every other targeted field on that step falls back
-   to random default values instead. Confirmed by isolated test (two
-   separate 1:1 relationships into one target: first field correct,
-   second field garbage, regardless of block order -- always "first
-   wins").
-   **Worked around**: the 1:1 relationship (`party` to `party_contact`)
-   uses a matching `incremental` sequence with a SQL-formatted key
-   (`CONCAT('CNT', LPAD(...))`) instead of a `foreignKeys` block at all,
-   so there's no fan-in to collide.
+1. **Multiple `foreignKeys` entries targeting the same step collide** --
+   only the first actually populates real parent values; every other
+   targeted field falls back to random defaults.
+   Worked around: `party` <-> `party_contact` (1:1) uses a matching
+   `incremental` sequence instead of `foreignKeys`, so there's no fan-in.
 
-2. **`cardinality` (`min`/`max`/`ratio`) on a `foreignKeys` relationship
-   doesn't expand the child step's row count** -- despite being
-   documented to (`docs/generator/foreign-key.md`'s own "one-to-many"
-   section), it silently collapses to a 1:1 mapping with the parent.
-   **Worked around**: the one-to-many relationships that need real
-   variety (`accounts` to `account_contracts`, `accounts` to
-   `transactions`) use `count.perField` directly on the child step
-   instead (the *other* documented mechanism for "N records per group of
-   field values") -- confirmed to actually expand the row count.
+2. **`cardinality` on a `foreignKeys` relationship doesn't expand the
+   child's row count** -- despite being documented to, it collapses to
+   1:1 with the parent.
+   Worked around: `count.perField` on the child step instead (the other
+   documented mechanism -- confirmed to actually work, see the
+   limitation noted below).
 
-3. **Adding any `foreignKeys` entry targeting a step -- even just one --
-   silently forces every OTHER foreignKeys-target step in the whole plan
-   to inflate its row count to match that new entry's source step.**
-   Found giving `party` a real `foreignKeys` relationship to the
-   20,000-row `party_address` pool: `party` itself ballooned from 500 to
-   20,000 rows, and `account_contracts`/`transactions` (unrelated
-   relationships, completely unchanged) ballooned from a few
-   hundred/thousand rows to 60,000 each. Confirmed by direct row-count of
-   the generated CSVs before and after adding/removing that one
-   relationship.
-   **Worked around**: `party.address_id` uses a deterministic SQL hash of
-   its own `seq` into `party_address`'s known `ADR<8-digit-seq>` id format
-   instead of a `foreignKeys` relationship.
+3. **Adding any `foreignKeys` entry targeting a step inflates every
+   OTHER foreignKeys-target step's row count** to match its source step
+   (giving `party` a real FK to the 20,000-row `party_address` pool
+   ballooned `party` itself to 20,000 rows, and unrelated
+   `account_contracts`/`transactions` to 60,000 each).
+   Worked around: `party.address_id` is a deterministic SQL hash of `seq`
+   into `party_address`'s known id format instead.
 
-4. **A weighted `oneOf` (the `"value->0.35"` syntax) always returns the
-   LAST listed alternative, for every single row.** Confirmed across
-   every weighted field in this plan (country, currency, account_type,
-   contact method, boolean flags, etc.) by checking the actual value
-   distribution in the generated CSVs -- an *unweighted* `oneOf` (a plain
-   list, no `->weight`) generates a normal, correctly varied distribution.
-   **Worked around**: every field needing realistic weighted probabilities
-   uses a hidden `<field>_bucket` (a `double` field, range 0.0-1.0,
-   `omit: true`) plus a `sql` field with a `CASE` expression keyed off
-   cumulative thresholds on that bucket -- confirmed to produce a real,
-   correctly-weighted distribution.
+4. **A weighted `oneOf` (`"value->0.35"`) always returns the LAST
+   alternative**, every row -- confirmed via generated-value distribution
+   across every weighted field; an unweighted `oneOf` works normally.
+   Worked around: a hidden `<field>_bucket` double (`omit: true`) + `sql`
+   `CASE` on cumulative thresholds instead.
 
-5. **A field's `sql` cannot see the real value of another field in the
-   same step that is itself populated via `foreignKeys`** -- the
-   foreignKeys post-processing pass overwrites that field's value AFTER
-   every per-row `sql` field in the step has already been evaluated
-   against its placeholder value. Found trying to make
-   `account_contracts.contract_role` loan-vs-other aware by extracting
-   `account_type` back out of `accounts_key` (itself populated via
-   foreignKeys) with `SUBSTRING`: the loan branch never fired, for any
-   row, in any run.
-   **Worked around**: this can't be fixed inside the plan at all (it's
-   the tool's generation order, not a syntax issue). `contract_role` is
-   generated as a flat weighted pick with no loan-awareness, and
-   `postprocess/banking.sh` runs automatically after generation (see
-   `make seed`'s target) and swaps `Power of Attorney` to `Guarantor`
-   wherever the contract's parent account is a Loan (recovering
-   `account_type` from a 2-letter code embedded in `accounts.id`, since
-   that's the only way to relate
-   the two CSVs without a real join).
+5. **A field's `sql` can't see another same-step field's real value once
+   that field is populated via `foreignKeys`** -- the FK pass overwrites
+   it after every `sql` field has already evaluated. Tried making
+   `contract_role` loan-aware this way; never fired.
+   Can't be fixed in-plan -- `contract_role` is a flat weighted pick,
+   fixed up after generation by `postprocess/csv/banking.sh` (recovering
+   `account_type` from a 2-letter code in `accounts.id`) or
+   `postprocess/sql/banking.sql` (a real SQL join).
 
-6. **A string literal inside one field's `sql` that exactly matches
-   another field's name in the same step gets corrupted.** Found when
-   `transactions.method`'s `CASE` had a `'merchant'` branch value in the
-   same step as an (originally named) `merchant` field: every row that
-   should have been `'merchant'` came out as the literal text
-   `` `_temp_merchant` `` in the generated CSV.
-   **Worked around**: renamed the field to `merchant_name` -- no fix
-   needed on the `method` side, since the value and the field name no
-   longer match exactly.
+6. **A string literal in one field's `sql` exactly matching another
+   field's name in the same step gets corrupted** -- a `'merchant'` CASE
+   branch became the literal text `_temp_merchant` once a field was also
+   named `merchant`.
+   Worked around: renamed the field to `merchant_name`.
 
-7. **`header: "true"` at the CSV *connection* level is silently ignored**
-   for a step whose `path` ends in `.csv` (the single-file-consolidation
-   path). Setting `header: true` on each *step's own* `options` block
-   instead works correctly.
+7. **`header: true` at the CSV connection level is silently ignored** for
+   a step whose `path` ends in `.csv`. Setting it on the step's own
+   `options` block instead works correctly.
 
 ## A known limitation of the workaround, not a bug
 
-`transactions.accounts_FK`'s one-to-many cardinality (`min: 5, max: 50`)
-lands on a Data Caterer "index-based" assignment that picks one fixed
-count per parent (in one test run, 28) rather than a true per-account
-random range, and only spreads across as many distinct accounts as
-`total records / that fixed count` covers -- not all 400. Every FK value
-generated is still guaranteed to reference a real account (verified: zero
-orphan values across every relationship, every run), just not every
-account is guaranteed to have transactions. Good enough for what this is
-(sample/demo data), not something to chase further given it traces back
-to the same underlying `cardinality` behavior as issue 2 above.
+Every `foreignKeys` + `count.perField` relationship here --
+`account_contracts.accounts_key` (`min: 1, max: 3`) and
+`transactions.accounts_FK` (`min: 5, max: 50`) -- lands on an
+"index-based" assignment that picks one FIXED count per parent (uniform
+across every parent in a run, e.g. 150/account and ~140-168/account in
+one test run) rather than a true random range, and only spreads across
+as many distinct accounts as `total records / that fixed count` covers --
+not guaranteed to be all 400. Confirmed identically for `FORMAT=sql`,
+not just CSV -- this is Data Caterer's general `count.perField` behavior,
+not sink-specific. Every FK value is still guaranteed to reference a real
+account (zero orphans, every run). Good enough for sample/demo data, not
+worth chasing further -- traces back to the same `cardinality` behavior
+as issue 2 above.

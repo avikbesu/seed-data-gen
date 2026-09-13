@@ -3,76 +3,50 @@
 #
 # Schema:
 #   customer         -- one row per customer
-#   supplier         -- one row per supplier (external vendor supplying
-#                        products to the store)
+#   supplier         -- external vendor supplying products to the store
 #   product          -- one row per product, supplied by one supplier
-#   employee         -- one row per store employee (20 total -- this is
-#                        a small, fixed staff roster, not a large pool)
-#   shift_roster     -- one row per scheduled shift; each of the 20
-#                        employees works 5 shifts across the store's
-#                        7-day week (see that step's own comment for the
-#                        exact date-window interpretation)
-#   order            -- one row per order: a customer buying (possibly
-#                        several) products, processed by one employee
-#   order_item       -- one row per product line within an order (the
-#                        "possibly several products per order" part) --
-#                        1-5 lines per order, deterministically, not via
-#                        `foreignKeys` (see that step's own comment for
-#                        why)
-#   invoice          -- one row per invoice, 1:1 with order; its amount
-#                        fields are recomputed by postprocess/retail.sh
-#                        from order_item's real totals (see that file)
+#   employee         -- fixed 20-person staff roster (not a large pool)
+#   shift_roster     -- each of the 20 employees works 5 shifts across
+#                        the store's 7-day week (see that step's comment)
+#   order            -- a customer buying products, processed by one
+#                        employee
+#   order_item       -- 1-5 product lines per order, deterministically,
+#                        not via `foreignKeys` (see that step's comment)
+#   invoice          -- 1:1 with order; amounts recomputed by
+#                        postprocess/csv/retail.sh from order_item totals
 #
-# All date/timestamp fields represent Australia/Sydney wall-clock time (a
-# generation-range convention -- CSV carries no timezone metadata).
+# Date/timestamp fields are Australia/Sydney wall-clock time. No
+# sinkOptions.seed is set -- every run produces a different dataset.
 #
-# No sinkOptions.seed is set on purpose -- every run should produce a
-# different dataset, not a reproducible one.
-#
-# Unlike banking.yaml (which keeps one real `foreignKeys` relationship),
-# this plan uses NO `foreignKeys` block at all -- every many-to-one
-# reference below (product -> supplier, shift_roster -> employee, order
-# -> customer, order -> employee, order_item -> order, order_item ->
-# product) is computed deterministically instead: a scattered
-# deterministic hash of the row's own `seq` into the parent's known
-# `<PREFIX><8-digit-seq>` id format (different prime multipliers per
-# field so pairings don't look like a fixed repeating cycle), a matching
+# Unlike banking.yaml, this plan uses NO `foreignKeys` block at all --
+# every many-to-one reference is a deterministic hash of the row's own
+# `seq` into the parent's `<PREFIX><8-digit-seq>` id format (different
+# prime multipliers per field so pairings don't look cyclic), a matching
 # `incremental` sequence for genuine 1:1s (invoice <-> order), or (for
-# order_item, which needs a real one-to-many count) a closed-form
-# cumulative-sum encoding -- see that step's own comment.
+# order_item's real one-to-many) a closed-form cumulative-sum encoding --
+# see that step's own comment.
 #
-# This plan originally tried a real `foreignKeys` + `count.perField`
-# block for order -> order_item, following banking.yaml's precedent (and
-# its bug 2: `cardinality` alone doesn't expand row count, `perField`
-# does). Empirically it does expand the row count, but regardless of
-# `count.records` or the `perField` min/max range, Data Caterer 0.19.1's
-# INDEX-BASED cardinality strategy only ever covered ~500-550 of the
-# 2000 orders (~25-27%) -- a further, undocumented limitation beyond the
-# ones banking.yaml already catalogued, confirmed directly by testing
-# several `records`/range combinations, not assumed. Good enough for
-# banking's transactions (still covers the large majority of accounts),
-# not good enough here (75%+ of orders with zero items), so order_item
-# was redesigned to not use `foreignKeys` at all -- see that step's
-# comment for how it still gets real 1-5-item variety AND 100% order
+# order -> order_item originally tried real `foreignKeys` +
+# `count.perField` (banking.yaml bug 2's fix). It does expand row count,
+# but regardless of `count.records` or the `perField` range, the
+# INDEX-BASED cardinality strategy only ever covered ~25-27% of the 2000
+# orders (confirmed by testing several combinations) -- worse than
+# banking's transactions, so order_item was redesigned with no
+# `foreignKeys` at all instead, for real 1-5-item variety AND 100%
 # coverage.
 #
 # A field's `sql` can only see other fields in its OWN row of its OWN
-# step -- it can't reach into another step's rows at all, let alone
-# aggregate over them (see banking.yaml bug 5 for the same class of
-# limitation, there about `foreignKeys`-populated sibling fields
-# specifically). That means order_item.unit_price can't actually look up
-# product.price, and invoice.subtotal_amount can't actually sum an
-# order's real order_item line totals, purely within the plan. Both are
-# generated here as independently-random placeholders and then corrected
-# by postprocess/retail.sh after generation -- see that file.
+# step (same class of limitation as banking.yaml bug 5) -- so
+# order_item.unit_price/invoice.subtotal_amount are generated as random
+# placeholders here and corrected by postprocess/csv/retail.sh after
+# generation.
 #
-# Verified directly against the real datacatering/data-caterer:0.19.1
-# image (`make seed SYS=retail`), not assumed: every FK-shaped value
-# resolves to a real parent row, row counts land where expected, and
-# (after postprocess/retail.sh runs) every order_item's line_total
-# matches its product's real price x quantity, and every invoice's
-# subtotal_amount matches the real sum of its order's order_item line
-# totals.
+# Verified directly against the real image (`make seed SYS=retail`), not
+# assumed: every FK-shaped value resolves to a real parent row, row
+# counts land where expected, and (after the postprocess script runs)
+# every order_item's line_total matches its product's real price x
+# quantity, and every invoice's subtotal_amount matches its order's real
+# order_item sum.
 version: "1.0"
 name: "retail_sample_data"
 description: "Simplified retail store sample data with intact customer/supplier/product/order relationships"
@@ -210,12 +184,9 @@ dataSources:
               sql: "CASE WHEN status_bucket < 0.85 THEN 'Active' WHEN status_bucket < 0.95 THEN 'Suspended' ELSE 'Inactive' END"
 
       # ----- product -------------------------------------------------------
-      # supplier_id is a scattered deterministic pick across supplier's
-      # 40-row range (same technique as party.address_id in banking.yaml)
-      # -- not `foreignKeys`, to keep this plan to just the one real
-      # `foreignKeys` block (see file-level comment). price is the real
-      # source of truth postprocess/retail.sh uses to correct
-      # order_item.unit_price after generation.
+      # supplier_id: deterministic scattered pick across supplier's 40-row
+      # range (see file-level comment). price is the source of truth
+      # postprocess/csv/retail.sh uses to correct order_item.unit_price.
       - name: "product"
         options:
           path: "/opt/app/data/retail/product.csv"
@@ -341,22 +312,15 @@ dataSources:
 
       # ----- shift_roster ------------------------------------------------
       # Exactly 20 employees x 5 shifts = 100 rows -- a fixed, deterministic
-      # weekly roster, not a random one-to-many (unlike shift_roster in an
-      # earlier version of this plan, this needs no `foreignKeys` at all,
-      # freeing that plan's one-`foreignKeys`-block budget for order ->
-      # order_item below, which needs real variety far more).
+      # weekly roster, no `foreignKeys` needed.
       #
-      # Date window: interpreted as the 7 calendar days centered on
-      # CURRENT_DATE() (today - 3 .. today + 3), i.e. "the store's current
-      # week, give or take". Store is open every day of that week
-      # (day_offset ranges over all 7 values below, so every day gets
-      # multiple employees rostered on it -- verified after generation,
-      # not assumed). Each employee works exactly 5 of those 7 days:
-      # emp_idx (0-19) + shift_num (0-4), mod 7, gives each employee 5
-      # CONSECUTIVE-mod-7 distinct days (always 5 unique values, since 5
-      # consecutive integers mod 7 can't repeat) -- which 5 days differs
-      # per employee (staggered by emp_idx) rather than every employee
-      # sharing the identical 2 days off.
+      # Date window: the 7 calendar days centered on CURRENT_DATE() (today
+      # -3..+3). Store is open every day (day_offset covers all 7 values,
+      # verified after generation). Each employee works exactly 5 of those
+      # 7 days: `emp_idx (0-19) + shift_num (0-4), mod 7` gives 5
+      # consecutive-mod-7 distinct days per employee (always unique, since
+      # 5 consecutive integers mod 7 can't repeat), staggered by emp_idx
+      # so employees don't all share the same days off.
       - name: "shift_roster"
         options:
           path: "/opt/app/data/retail/shift_roster.csv"
@@ -454,7 +418,7 @@ dataSources:
       # order (e.g. the cashier who rang it up), not a purchasing agent.
       # No amount field here -- an order's real total is the sum of its
       # order_item lines, owned by invoice.subtotal_amount after
-      # postprocess/retail.sh runs (see order_item and invoice below).
+      # postprocess/csv/retail.sh runs (see order_item and invoice below).
       - name: "order"
         options:
           path: "/opt/app/data/retail/order.csv"
@@ -530,34 +494,20 @@ dataSources:
                 END
 
       # ----- order_item ----------------------------------------------------
-      # 1-5 product lines per order, deterministically -- NOT via
-      # `foreignKeys` + `count.perField` despite that being the
-      # documented combination for real one-to-many variety (bug 2 in
-      # banking.yaml's file-level comment). Tried that here first; found
-      # a further, undocumented Data Caterer 0.19.1 behavior doing so:
-      # regardless of the step's `count.records` value or the
-      # `perField` min/max range, the INDEX-BASED cardinality strategy
-      # only ever covered roughly 500-550 of the 2000 orders (~25-27%),
-      # leaving 75%+ of orders with zero order_item rows entirely --
-      # confirmed directly by testing several `records`/range
-      # combinations, not assumed. That's a far worse gap than banking's
-      # accepted "not every account has transactions" limitation, so
-      # instead of accepting it, every order gets full deterministic
-      # coverage here:
+      # 1-5 product lines per order, deterministically -- see the
+      # file-level comment for why not via `foreignKeys` + `count.perField`.
       #
-      # order_seq's items-per-order is `((order_seq - 1) % 5) + 1` --
-      # 400 orders get 1 item, 400 get 2, ..., 400 get 5 (a uniform
-      # repeating cycle, period 5, per-cycle row total 1+2+3+4+5=15).
-      # row_seq (1..6000, 400 cycles x 15 rows/cycle) is deterministically
-      # decoded back into (which order, which item-within-that-order) via
-      # cycle_index/offset_in_cycle/order_pos_in_cycle below -- the
-      # inverse of that same cumulative-sum pattern. Every one of the
-      # 2000 orders is guaranteed exactly its assigned item count -- 100%
-      # coverage, verified directly after generation, not assumed.
+      # items-per-order is `((order_seq - 1) % 5) + 1`: 400 orders get 1
+      # item, 400 get 2, ..., 400 get 5 (period-5 cycle, 1+2+3+4+5=15
+      # rows/cycle). row_seq (1..6000, 400 cycles x 15 rows) decodes back
+      # into (which order, which item) via cycle_index/offset_in_cycle/
+      # order_pos_in_cycle below -- the inverse of that cumulative-sum
+      # pattern. Every order gets exactly its assigned item count -- 100%
+      # coverage, verified after generation.
       #
-      # unit_price/line_total are independently-random placeholders --
-      # see file-level comment for why `sql` can't reach product.price --
-      # corrected by postprocess/retail.sh after generation.
+      # unit_price/line_total are random placeholders (sql can't reach
+      # product.price -- file-level comment), corrected by
+      # postprocess/csv/retail.sh after generation.
       - name: "order_item"
         options:
           path: "/opt/app/data/retail/order_item.csv"
@@ -638,7 +588,7 @@ dataSources:
       # at 2000 rows) -- same technique as party <-> party_contact in
       # banking.yaml, not `foreignKeys`. subtotal_amount/tax_amount/
       # total_amount are independently-random placeholders here -- see
-      # file-level comment for why -- corrected by postprocess/retail.sh
+      # file-level comment for why -- corrected by postprocess/csv/retail.sh
       # from order_item's real totals after generation. tax_rate and
       # payment_status/paid_date are left as generated (not derived from
       # anything else).
