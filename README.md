@@ -3,10 +3,17 @@
 Generates sample datasets as CSV files using [Data Caterer
 0.19.1](https://data.catering/0.19.1/), a Spark-based data generation
 tool. Each dataset is a "system": a plan file under `data-caterer/plan/`
-plus an optional post-processing script. Currently ships one system,
-`banking` -- a simplified, relationally-intact banking dataset (party,
-party_address, party_contact, party_profile, accounts,
-account_contracts, transactions).
+plus an optional post-processing script. Ships two systems so far:
+
+- `banking` -- a simplified banking dataset (party, party_address,
+  party_contact, party_profile, accounts, account_contracts,
+  transactions).
+- `retail` -- a simplified retail store dataset (customer, merchant,
+  employee, shift_roster, merchant_order, invoice).
+
+Both are relationally intact -- every foreign-key-shaped value resolves
+to a real parent row, verified directly against the real image, not
+assumed (see each plan file's own header comment for how and why).
 
 Standalone and dependency-free (just Docker) so it can be dropped into
 other repos as a git submodule wherever sample data is useful.
@@ -15,24 +22,36 @@ other repos as a git submodule wherever sample data is useful.
 
 ```
 make seed SYS=banking
+make seed SYS=retail
 ```
 
-Output lands in `data/banking/` (gitignored) -- one clean CSV file per
+Output lands in `data/<sys>/` (gitignored) -- one clean CSV file per
 table, with a header row and no leftover Spark part-files.
 
 ## Adding a system
 
-Drop in a new `data-caterer/plan/<sys>.yaml` (see `banking.yaml`'s
-header comment for the format and gotchas) and `make seed SYS=<sys>`
+Drop in a new `data-caterer/plan/<sys>.yaml` and `make seed SYS=<sys>`
 works immediately -- nothing else needs editing. Its steps' output
 `path`s must write under `/opt/app/data/<sys>/` to match the volume
 mount in `docker/docker-compose.seed.yaml`.
+
+For the plan format and Data Caterer gotchas, see `banking.yaml`'s
+header comment (the full list of real bugs found, e.g. why a weighted
+`oneOf` can't be trusted) and `retail.yaml`'s header comment (why it
+uses only one real `foreignKeys` block despite having several
+many-to-one relationships, and the deterministic-reference techniques
+it uses for the rest instead). Whatever you add, verify it directly
+against the real image (`make seed SYS=<sys>`, then check row counts
+and that every FK-shaped value resolves to a real parent row) rather
+than assuming Data Caterer's documented behavior holds -- both existing
+plans found real discrepancies this way.
 
 If the plan needs fix-up that Data Caterer can't express (like
 banking's loan-only Guarantor rule -- see `data-caterer/README.md`),
 add an executable `data-caterer/postprocess/<sys>.sh`; the `seed` target
 runs it automatically after generation, passing the output directory as
-`$1`. A system with nothing to fix up just doesn't have one.
+`$1`. A system with nothing to fix up just doesn't have one (retail
+doesn't).
 
 ## As a submodule
 

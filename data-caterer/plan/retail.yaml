@@ -1,0 +1,513 @@
+# Simplified retail store sample data -- unified Data Caterer plan (see
+# https://data.catering/0.19.1/ and docker/docker-compose.seed.yaml).
+#
+# Schema:
+#   customer         -- one row per customer
+#   merchant         -- one row per merchant (a department/vendor within
+#                        the store, e.g. "Electronics", "Apparel")
+#   employee         -- one row per employee, belongs to one merchant
+#   shift_roster     -- one row per scheduled shift, belongs to one
+#                        employee -- the one genuine one-to-many
+#                        relationship in this plan (see below)
+#   merchant_order    -- one row per order, placed by a customer against
+#                        a merchant
+#   invoice          -- one row per invoice, 1:1 with merchant_order
+#
+# All date/timestamp fields represent Australia/Sydney wall-clock time (a
+# generation-range convention -- CSV carries no timezone metadata).
+#
+# No sinkOptions.seed is set on purpose -- every run should produce a
+# different dataset, not a reproducible one.
+#
+# This plan deliberately uses only ONE real `foreignKeys` relationship
+# (employee -> shift_roster) instead of one per relationship, to sidestep
+# two real Data Caterer 0.19.1 bugs documented at length in banking.yaml's
+# own header comment (confirmed there directly against the real image,
+# not re-litigated here):
+#
+#   - bug 1: multiple `foreignKeys` entries targeting the SAME step
+#     collide (only the first actually populates; every other silently
+#     falls back to random garbage).
+#   - bug 3: adding a `foreignKeys` entry sourced from a step with a very
+#     different row count than another already-defined entry inflates
+#     ALL foreignKeys-target steps' row counts to match the larger
+#     source -- observed there ballooning an unrelated 400-row
+#     relationship to 60,000 rows just from adding one new 20,000-row
+#     source relationship elsewhere in the same plan.
+#
+# Since this plan has several many-to-one relationships (employee ->
+# merchant, merchant_order -> customer, merchant_order -> merchant,
+# invoice -> merchant_order) but only needs ONE of them to have real
+# random variety (shift_roster per employee -- some employees work far
+# more shifts than others), every other relationship uses the same
+# deterministic-reference techniques banking.yaml uses for its own
+# non-`foreignKeys` relationships instead of a second/third/fourth
+# `foreignKeys` block:
+#
+#   - employee.merchant_id and merchant_order's customer_id/merchant_id:
+#     a scattered deterministic hash of the row's own `seq` into the
+#     parent's known `<PREFIX><8-digit-seq>` id format (same technique as
+#     party.address_id in banking.yaml) -- different prime multipliers
+#     per field so the pairings don't look like a fixed repeating cycle.
+#   - invoice <-> merchant_order (1:1, both fixed equal row counts): a
+#     matching `incremental` sequence, same technique as party <->
+#     party_contact in banking.yaml.
+#
+# Verified directly against the real datacatering/data-caterer:0.19.1
+# image (`make seed SYS=retail`), not assumed: every FK-shaped value
+# resolves to a real parent row, row counts land where expected, and no
+# other plan's steps are affected by running this one.
+version: "1.0"
+name: "retail_sample_data"
+description: "Simplified retail store sample data with intact customer/merchant/order relationships"
+
+config:
+  flags:
+    enableGenerateData: true
+    enableSaveReports: false
+  generation:
+    numRecordsPerBatch: 100000
+  folders:
+    generatedReportsFolderPath: "/opt/app/data/report"
+
+dataSources:
+  - name: "retail_csv"
+    connection:
+      type: "csv"
+    steps:
+      # ----- customer ----------------------------------------------------
+      - name: "customer"
+        options:
+          path: "/opt/app/data/retail/customer.csv"
+          header: true
+        count:
+          records: 300
+        fields:
+          - name: "seq"
+            type: "long"
+            options:
+              incremental: 1
+              omit: true
+          - name: "id"
+            options:
+              sql: "CONCAT('CUS', LPAD(CAST(seq AS STRING), 8, '0'))"
+          - name: "first_name"
+            options:
+              expression: "#{Name.firstName}"
+          - name: "last_name"
+            options:
+              expression: "#{Name.lastName}"
+          - name: "email"
+            options:
+              email: ""
+          - name: "phone"
+            options:
+              phone: "AU"
+          - name: "loyalty_tier_bucket"
+            type: "double"
+            options:
+              omit: true
+              min: 0.0
+              max: 1.0
+          - name: "loyalty_tier"
+            # weighted via a bucket + CASE, not `oneOf` -- see banking.yaml
+            # bug 4 for why a weighted `oneOf` can't be trusted.
+            options:
+              sql: >-
+                CASE
+                  WHEN loyalty_tier_bucket < 0.4 THEN 'Bronze'
+                  WHEN loyalty_tier_bucket < 0.7 THEN 'Silver'
+                  WHEN loyalty_tier_bucket < 0.9 THEN 'Gold'
+                  ELSE 'Platinum'
+                END
+          - name: "signup_date"
+            type: "date"
+            options:
+              min: "2018-01-01"
+              max: "2026-09-10"
+          - name: "active_bucket"
+            type: "double"
+            options:
+              omit: true
+              min: 0.0
+              max: 1.0
+          - name: "active"
+            type: "boolean"
+            options:
+              sql: "CASE WHEN active_bucket < 0.9 THEN true ELSE false END"
+
+      # ----- merchant ------------------------------------------------------
+      - name: "merchant"
+        options:
+          path: "/opt/app/data/retail/merchant.csv"
+          header: true
+        count:
+          records: 40
+        fields:
+          - name: "seq"
+            type: "long"
+            options:
+              incremental: 1
+              omit: true
+          - name: "id"
+            options:
+              sql: "CONCAT('MCH', LPAD(CAST(seq AS STRING), 8, '0'))"
+          - name: "merchant_name"
+            options:
+              expression: "#{Company.name}"
+          - name: "category_bucket"
+            type: "double"
+            options:
+              omit: true
+              min: 0.0
+              max: 1.0
+          - name: "category"
+            options:
+              sql: >-
+                CASE
+                  WHEN category_bucket < 0.25 THEN 'Electronics'
+                  WHEN category_bucket < 0.45 THEN 'Apparel'
+                  WHEN category_bucket < 0.65 THEN 'Grocery'
+                  WHEN category_bucket < 0.8 THEN 'Home & Garden'
+                  WHEN category_bucket < 0.92 THEN 'Sports & Outdoors'
+                  ELSE 'Electronics & Appliances'
+                END
+          - name: "contact_email"
+            options:
+              email: ""
+          - name: "onboarded_date"
+            type: "date"
+            options:
+              min: "2016-01-01"
+              max: "2026-06-30"
+          - name: "status_bucket"
+            type: "double"
+            options:
+              omit: true
+              min: 0.0
+              max: 1.0
+          - name: "status"
+            options:
+              sql: "CASE WHEN status_bucket < 0.85 THEN 'Active' WHEN status_bucket < 0.95 THEN 'Suspended' ELSE 'Inactive' END"
+
+      # ----- employee --------------------------------------------------------
+      # merchant_id is a scattered deterministic pick across merchant's
+      # 40-row range (same technique as party.address_id in banking.yaml)
+      # -- not a `foreignKeys` relationship, to keep this plan to just the
+      # one real `foreignKeys` block (see file-level comment).
+      - name: "employee"
+        options:
+          path: "/opt/app/data/retail/employee.csv"
+          header: true
+        count:
+          records: 120
+        fields:
+          - name: "seq"
+            type: "long"
+            options:
+              incremental: 1
+              omit: true
+          - name: "id"
+            options:
+              sql: "CONCAT('EMP', LPAD(CAST(seq AS STRING), 8, '0'))"
+          - name: "first_name"
+            options:
+              expression: "#{Name.firstName}"
+          - name: "last_name"
+            options:
+              expression: "#{Name.lastName}"
+          - name: "email"
+            options:
+              email: ""
+          - name: "merchant_id"
+            options:
+              sql: "CONCAT('MCH', LPAD(CAST(((seq * 4001 + 977) % 40) + 1 AS STRING), 8, '0'))"
+          - name: "role_bucket"
+            type: "double"
+            options:
+              omit: true
+              min: 0.0
+              max: 1.0
+          - name: "role"
+            options:
+              sql: >-
+                CASE
+                  WHEN role_bucket < 0.4 THEN 'Sales Associate'
+                  WHEN role_bucket < 0.65 THEN 'Cashier'
+                  WHEN role_bucket < 0.85 THEN 'Stock Clerk'
+                  WHEN role_bucket < 0.95 THEN 'Supervisor'
+                  ELSE 'Manager'
+                END
+          - name: "hire_date"
+            type: "date"
+            options:
+              min: "2016-01-01"
+              max: "2026-06-30"
+          - name: "employment_status_bucket"
+            type: "double"
+            options:
+              omit: true
+              min: 0.0
+              max: 1.0
+          - name: "employment_status"
+            options:
+              sql: "CASE WHEN employment_status_bucket < 0.85 THEN 'Active' WHEN employment_status_bucket < 0.95 THEN 'On Leave' ELSE 'Terminated' END"
+
+      # ----- shift_roster ------------------------------------------------
+      # The one genuine one-to-many relationship in this plan -- 10-60
+      # shifts per employee, real variety, via `foreignKeys` +
+      # `count.perField` (the only combination confirmed to actually
+      # expand row count -- see bug 2 in banking.yaml's file-level
+      # comment).
+      - name: "shift_roster"
+        options:
+          path: "/opt/app/data/retail/shift_roster.csv"
+          header: true
+        count:
+          records: 120
+          perField:
+            fieldNames: ["employee_key"]
+            options:
+              min: 10
+              max: 60
+        fields:
+          - name: "row_seq"
+            type: "long"
+            options:
+              incremental: 1
+              omit: true
+          - name: "id"
+            options:
+              sql: "CONCAT('SFT', LPAD(CAST(row_seq AS STRING), 10, '0'))"
+          - name: "employee_key"
+            # populated via the foreignKeys block below
+          - name: "shift_date"
+            type: "date"
+            options:
+              min: "2025-01-01"
+              max: "2026-09-10"
+          - name: "shift_type_bucket"
+            type: "double"
+            options:
+              omit: true
+              min: 0.0
+              max: 1.0
+          - name: "shift_type"
+            options:
+              sql: >-
+                CASE
+                  WHEN shift_type_bucket < 0.3 THEN 'Morning'
+                  WHEN shift_type_bucket < 0.6 THEN 'Afternoon'
+                  WHEN shift_type_bucket < 0.85 THEN 'Evening'
+                  ELSE 'Night'
+                END
+          - name: "shift_start"
+            # fixed start/end per shift_type -- deterministic mapping, not
+            # a separate random field, since real rosters use fixed shift
+            # blocks.
+            options:
+              sql: >-
+                CASE shift_type
+                  WHEN 'Morning' THEN '06:00'
+                  WHEN 'Afternoon' THEN '12:00'
+                  WHEN 'Evening' THEN '17:00'
+                  ELSE '22:00'
+                END
+          - name: "shift_end"
+            options:
+              sql: >-
+                CASE shift_type
+                  WHEN 'Morning' THEN '14:00'
+                  WHEN 'Afternoon' THEN '20:00'
+                  WHEN 'Evening' THEN '01:00'
+                  ELSE '06:00'
+                END
+          - name: "status_bucket"
+            type: "double"
+            options:
+              omit: true
+              min: 0.0
+              max: 1.0
+          - name: "status"
+            options:
+              sql: >-
+                CASE
+                  WHEN status_bucket < 0.75 THEN 'Completed'
+                  WHEN status_bucket < 0.9 THEN 'Scheduled'
+                  WHEN status_bucket < 0.97 THEN 'No-Show'
+                  ELSE 'Cancelled'
+                END
+
+      # ----- merchant_order --------------------------------------------------
+      # customer_id and merchant_id are both scattered deterministic picks
+      # (different prime multipliers so the pairing doesn't look like a
+      # fixed repeating cycle) -- not `foreignKeys`, per the file-level
+      # comment: this plan keeps only one real `foreignKeys` block.
+      - name: "merchant_order"
+        options:
+          path: "/opt/app/data/retail/merchant_order.csv"
+          header: true
+        count:
+          records: 2000
+        fields:
+          - name: "seq"
+            type: "long"
+            options:
+              incremental: 1
+              omit: true
+          - name: "id"
+            options:
+              sql: "CONCAT('ORD', LPAD(CAST(seq AS STRING), 10, '0'))"
+          - name: "customer_id"
+            options:
+              sql: "CONCAT('CUS', LPAD(CAST(((seq * 4001 + 977) % 300) + 1 AS STRING), 8, '0'))"
+          - name: "merchant_id"
+            options:
+              sql: "CONCAT('MCH', LPAD(CAST(((seq * 6007 + 311) % 40) + 1 AS STRING), 8, '0'))"
+          - name: "order_date"
+            type: "timestamp"
+            options:
+              min: "2024-01-01 00:00:00"
+              max: "2026-09-10 23:59:59"
+          - name: "order_status_bucket"
+            type: "double"
+            options:
+              omit: true
+              min: 0.0
+              max: 1.0
+          - name: "order_status"
+            options:
+              sql: >-
+                CASE
+                  WHEN order_status_bucket < 0.55 THEN 'Delivered'
+                  WHEN order_status_bucket < 0.7 THEN 'Shipped'
+                  WHEN order_status_bucket < 0.85 THEN 'Confirmed'
+                  WHEN order_status_bucket < 0.92 THEN 'Pending'
+                  WHEN order_status_bucket < 0.97 THEN 'Cancelled'
+                  ELSE 'Returned'
+                END
+          - name: "order_amount"
+            type: "double"
+            options:
+              min: 5.00
+              max: 2000.00
+          - name: "currency_bucket"
+            type: "double"
+            options:
+              omit: true
+              min: 0.0
+              max: 1.0
+          - name: "currency"
+            options:
+              sql: >-
+                CASE
+                  WHEN currency_bucket < 0.6 THEN 'AUD'
+                  WHEN currency_bucket < 0.75 THEN 'USD'
+                  WHEN currency_bucket < 0.88 THEN 'GBP'
+                  ELSE 'EUR'
+                END
+          - name: "payment_method_bucket"
+            type: "double"
+            options:
+              omit: true
+              min: 0.0
+              max: 1.0
+          - name: "payment_method"
+            options:
+              sql: >-
+                CASE
+                  WHEN payment_method_bucket < 0.5 THEN 'Credit Card'
+                  WHEN payment_method_bucket < 0.75 THEN 'Debit Card'
+                  WHEN payment_method_bucket < 0.9 THEN 'Digital Wallet'
+                  ELSE 'Cash'
+                END
+
+      # ----- invoice -----------------------------------------------------
+      # 1:1 with merchant_order via a matching `incremental` sequence
+      # (both fixed at 2000 rows) -- same technique as party <->
+      # party_contact in banking.yaml, not `foreignKeys`.
+      - name: "invoice"
+        options:
+          path: "/opt/app/data/retail/invoice.csv"
+          header: true
+        count:
+          records: 2000
+        fields:
+          - name: "seq"
+            type: "long"
+            options:
+              incremental: 1
+              omit: true
+          - name: "id"
+            options:
+              sql: "CONCAT('INV', LPAD(CAST(seq AS STRING), 10, '0'))"
+          - name: "order_id"
+            options:
+              sql: "CONCAT('ORD', LPAD(CAST(seq AS STRING), 10, '0'))"
+          - name: "invoice_date"
+            type: "date"
+            options:
+              min: "2024-01-01"
+              max: "2026-09-10"
+          - name: "due_date"
+            type: "date"
+            options:
+              sql: "DATE_ADD(invoice_date, 14)"
+          - name: "subtotal_amount"
+            type: "double"
+            options:
+              min: 5.00
+              max: 2000.00
+          - name: "tax_rate_bucket"
+            type: "double"
+            options:
+              omit: true
+              min: 0.0
+              max: 1.0
+          - name: "tax_rate"
+            type: "double"
+            options:
+              sql: >-
+                CASE
+                  WHEN tax_rate_bucket < 0.7 THEN 0.10
+                  WHEN tax_rate_bucket < 0.85 THEN 0.05
+                  ELSE 0.0
+                END
+          - name: "tax_amount"
+            type: "double"
+            options:
+              sql: "ROUND(subtotal_amount * tax_rate, 2)"
+          - name: "total_amount"
+            type: "double"
+            options:
+              sql: "ROUND(subtotal_amount + tax_amount, 2)"
+          - name: "payment_status_bucket"
+            type: "double"
+            options:
+              omit: true
+              min: 0.0
+              max: 1.0
+          - name: "payment_status"
+            options:
+              sql: >-
+                CASE
+                  WHEN payment_status_bucket < 0.7 THEN 'Paid'
+                  WHEN payment_status_bucket < 0.85 THEN 'Pending'
+                  WHEN payment_status_bucket < 0.95 THEN 'Overdue'
+                  ELSE 'Refunded'
+                END
+          - name: "paid_date"
+            type: "date"
+            options:
+              sql: "CASE WHEN payment_status = 'Paid' THEN DATE_ADD(invoice_date, CAST(RAND() * 14 AS INT)) ELSE NULL END"
+
+foreignKeys:
+  # employee -> shift_roster (10-60 shifts per employee, real variety)
+  - source:
+      dataSource: "retail_csv"
+      step: "employee"
+      fields: ["id"]
+    generate:
+      - dataSource: "retail_csv"
+        step: "shift_roster"
+        fields: ["employee_key"]
