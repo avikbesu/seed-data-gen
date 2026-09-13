@@ -8,8 +8,8 @@ plus an optional post-processing script. Ships two systems so far:
 - `banking` -- a simplified banking dataset (party, party_address,
   party_contact, party_profile, accounts, account_contracts,
   transactions).
-- `retail` -- a simplified retail store dataset (customer, merchant,
-  employee, shift_roster, merchant_order, invoice).
+- `retail` -- a simplified retail store dataset (customer, supplier,
+  product, employee, shift_roster, order, order_item, invoice).
 
 Both are relationally intact -- every foreign-key-shaped value resolves
 to a real parent row, verified directly against the real image, not
@@ -38,20 +38,25 @@ mount in `docker/docker-compose.seed.yaml`.
 For the plan format and Data Caterer gotchas, see `banking.yaml`'s
 header comment (the full list of real bugs found, e.g. why a weighted
 `oneOf` can't be trusted) and `retail.yaml`'s header comment (why it
-uses only one real `foreignKeys` block despite having several
-many-to-one relationships, and the deterministic-reference techniques
-it uses for the rest instead). Whatever you add, verify it directly
-against the real image (`make seed SYS=<sys>`, then check row counts
-and that every FK-shaped value resolves to a real parent row) rather
-than assuming Data Caterer's documented behavior holds -- both existing
-plans found real discrepancies this way.
+uses NO real `foreignKeys` block at all despite having several
+many-to-one relationships -- including a genuine one-to-many that
+started out using `foreignKeys` + `count.perField` and was rebuilt
+deterministic after that only covered ~25% of parent rows in testing --
+and the deterministic-reference techniques, including a closed-form
+cumulative-sum encoding for the one-to-many case, it uses instead).
+Whatever you add, verify it directly against the real image (`make seed
+SYS=<sys>`, then check row counts and that every FK-shaped value
+resolves to a real parent row) rather than assuming Data Caterer's
+documented behavior holds -- both existing plans found real
+discrepancies this way.
 
 If the plan needs fix-up that Data Caterer can't express (like
-banking's loan-only Guarantor rule -- see `data-caterer/README.md`),
-add an executable `data-caterer/postprocess/<sys>.sh`; the `seed` target
-runs it automatically after generation, passing the output directory as
-`$1`. A system with nothing to fix up just doesn't have one (retail
-doesn't).
+banking's loan-only Guarantor rule, or retail's cross-step amount
+syncing -- see `data-caterer/README.md` and `postprocess/retail.sh`
+respectively), add an executable `data-caterer/postprocess/<sys>.sh`;
+the `seed` target runs it automatically after generation, passing the
+output directory as `$1`. A system with nothing to fix up just doesn't
+have one.
 
 ## As a submodule
 
