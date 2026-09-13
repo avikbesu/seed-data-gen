@@ -39,7 +39,7 @@ awk -F, '
 		print
 	}
 ' OFS=, "$dir/product.csv" "$dir/order_item.csv" > "$dir/order_item.csv.tmp"
-mv "$dir/order_item.csv.tmp" "$dir/order_item.csv"
+mv -f "$dir/order_item.csv.tmp" "$dir/order_item.csv"
 
 awk -F, '
 	NR==FNR {
@@ -58,4 +58,4 @@ awk -F, '
 		print
 	}
 ' OFS=, "$dir/order_item.csv" "$dir/invoice.csv" > "$dir/invoice.csv.tmp"
-mv "$dir/invoice.csv.tmp" "$dir/invoice.csv"
+mv -f "$dir/invoice.csv.tmp" "$dir/invoice.csv"

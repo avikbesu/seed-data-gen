@@ -28,4 +28,4 @@ awk -F, '
 		print
 	}
 ' OFS=, "$dir/accounts.csv" "$dir/account_contracts.csv" > "$dir/account_contracts.csv.tmp"
-mv "$dir/account_contracts.csv.tmp" "$dir/account_contracts.csv"
+mv -f "$dir/account_contracts.csv.tmp" "$dir/account_contracts.csv"
