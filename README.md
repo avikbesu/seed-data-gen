@@ -23,9 +23,27 @@ table, with a header row and no leftover Spark part-files.
 git submodule add https://github.com/avikbesu/seed-data-banking.git seed-data-banking
 ```
 
-Then from the parent repo, either run `make -C seed-data-banking
-seed-banking` directly, or add a delegating target to the parent's own
-Makefile.
+The path you give `git submodule add` is just a suggestion -- nothing in
+this repo depends on it, and nothing in the parent repo should hardcode
+it either (submodules get renamed/moved). `setup.sh` is self-locating
+(it resolves every path from its own location, via `BASH_SOURCE`), so
+the parent repo only needs to *find* the submodule -- by identity (its
+git remote), not by a fixed path -- and hand `setup.sh` a destination.
+`git submodule foreach` does exactly that lookup:
+
+```makefile
+seed-banking: ## Generate sample banking data into data/banking/, wherever the seed-data-banking submodule is checked out
+	git submodule update --init --recursive
+	git submodule foreach --quiet 'case "$$(git remote get-url origin 2>/dev/null)" in \
+		*seed-data-banking*) ./setup.sh "$$toplevel/data/banking" ;; esac'
+	@test -d data/banking || { echo "seed-banking: no seed-data-banking submodule found" >&2; exit 1; }
+```
+
+This keeps working if the submodule is later moved or renamed -- e.g.
+`git submodule add ... vendor/seed-data` -- with no changes needed on
+the parent repo's side. Calling `setup.sh` directly (`./path/to/setup.sh
+[dest]`) also works for a one-off run, e.g. right after `git submodule
+add`, to populate the initial dataset.
 
 ## Layout
 
