@@ -1,25 +1,28 @@
 # seed-data-gen
 
-Generates sample datasets using [Data Caterer
+Generates relationally-intact sample datasets using [Data Caterer
 0.19.1](https://data.catering/0.19.1/), a Spark-based data generation
-tool. Each dataset is a "system": a plan file under `data-caterer/plan/`
-plus an optional post-processing script. Output format is `csv` (default)
-or `sql` -- a Postgres dump -- via `FORMAT=csv|sql` (see "Postgres dump"
-below); `sql` support is currently plan-by-plan, not automatic for every
-system. Ships two systems so far:
+tool. Standalone and dependency-free (just Docker), so it can be dropped
+into other repos as a git submodule wherever sample data is useful.
 
-- `banking` -- a simplified banking dataset (party, party_address,
-  party_contact, party_profile, accounts, account_contracts,
-  transactions). Supports `FORMAT=sql`.
-- `retail` -- a simplified retail store dataset (customer, supplier,
-  product, employee, shift_roster, order, order_item, invoice).
+Every foreign-key-shaped value resolves to a real parent row, verified
+directly against the real image rather than assumed — see each plan
+file's header comment for how and why that matters here.
 
-Both are relationally intact -- every foreign-key-shaped value resolves
-to a real parent row, verified directly against the real image, not
-assumed (see each plan file's own header comment for how and why).
+## Prerequisites
 
-Standalone and dependency-free (just Docker) so it can be dropped into
-other repos as a git submodule wherever sample data is useful.
+- Docker, with Compose v2 (the `docker compose` subcommand, not the
+  standalone `docker-compose` binary).
+
+## Systems
+
+Each dataset is a "system": a plan file under `data-caterer/plan/`, plus
+an optional post-processing script.
+
+| System    | Tables | `FORMAT=sql` |
+|-----------|--------|--------------|
+| `banking` | party, party_address, party_contact, party_profile, accounts, account_contracts, transactions | Yes |
+| `retail`  | customer, supplier, product, employee, shift_roster, order, order_item, invoice | No |
 
 ## Usage
 
@@ -28,73 +31,51 @@ make seed SYS=banking
 make seed SYS=retail
 ```
 
-Output lands in `data/<sys>/` (gitignored) -- one clean CSV file per
-table, with a header row and no leftover Spark part-files. This is
-`FORMAT=csv`, the default -- see "Postgres dump" below for `FORMAT=sql`.
+Output lands in `data/<sys>/` (gitignored): one clean CSV file per table,
+header row included, no leftover Spark part-files. Data Caterer's own
+log output is quiet by default; for full detail, set `LOG_LEVEL=info` on
+the `data-caterer` service in the relevant `docker/docker-compose.*.yaml`
+file, or pass `-e LOG_LEVEL=info` if calling `docker compose` directly.
 
-## Postgres dump (`FORMAT=sql`)
+## Postgres dump
 
 ```
 make seed SYS=banking FORMAT=sql
 ```
 
 `FORMAT` defaults to `csv`. `FORMAT=sql` starts an ephemeral Postgres
-container, generates the same dataset directly into it, applies that
-system's SQL fixup if present (`data-caterer/postprocess/sql/<sys>.sql`),
-runs `pg_dump` into `data/<sys>/<sys>.sql` (`CREATE DATABASE`/`CREATE
-TABLE` plus an `INSERT` per row), then tears the container down. Never
-reachable outside Docker (no host port published), never persists past
-one run.
+container, generates the same dataset directly into it, applies a SQL
+fixup if the system needs one, and runs `pg_dump` into
+`data/<sys>/<sys>.sql` — `CREATE DATABASE`/`CREATE TABLE` statements plus
+an `INSERT` per row. The container is never reachable outside Docker and
+never persists past one run.
 
-Both formats live in ONE `dataSources` entry per plan -- no duplicated
-fields or `foreignKeys`. `connection.type: "@@CONN_TYPE@@"` and each
-step's `options: {csv: {...}, sql: {...}}` are resolved at render time by
-`data-caterer/script/seed.sh`: substitutes `@@CONN_TYPE@@` to
-`csv`/`jdbc` (`"jdbc"` is Spark's real format name), then
-`data-caterer/script/hoist.awk` drops the inactive format's block and
-de-indents the active one's children into the flat `options:` shape Data
-Caterer expects. Real jdbc credentials live in
-`data-caterer/application-jdbc.conf.template`, appended only for
-`FORMAT=sql` (a `jdbc {}` block merely existing forces jdbc validation on
-any matching-named dataSource, breaking `FORMAT=csv` if left in
-unconditionally -- confirmed directly). See `banking.yaml`'s header
-comment for the full rationale and every finding along the way.
+Only `banking` supports it today. `FORMAT=sql` on a system that doesn't
+(like `retail`) fails immediately with a clear error, before touching
+Docker.
 
-Only `banking` has Postgres support today. `FORMAT=sql` on a plan with no
-`@@CONN_TYPE@@` token (like `retail`) fails fast with a clear error
-before touching Docker -- `data-caterer/script/seed.sh` checks for it up
-front, because without that check the plan still literally says
-`connection.type: "csv"`/`options.path`, so Data Caterer writes CSVs into
-the ephemeral Postgres container's own throwaway filesystem (never
-mounted for that compose service) instead of the database, and `pg_dump`
-produces a real-looking but completely empty `<sys>.sql` -- confirmed
-directly, exit code 0 either way without the guard.
-
-Adding Postgres support for another system means adding `csv:`/`sql:`
-sub-keys to each step's `options:` and templating `connection.type` the
-same way -- see `banking.yaml` as the reference -- plus, if needed, a
-fixup under `data-caterer/postprocess/sql/<sys>.sql`.
+To add Postgres support for another system, follow `banking.yaml` as the
+reference: one `dataSources` entry serves both formats, selected at
+render time by `data-caterer/script/seed.sh`. See that plan's header
+comment for the full mechanism and every Data Caterer behavior confirmed
+while building it.
 
 ## Adding a system
 
-Drop in a new `data-caterer/plan/<sys>.yaml` and `make seed SYS=<sys>`
-works immediately. Its steps' CSV output paths must write under
-`/opt/app/data/<sys>/` to match the volume mount in
+Drop in `data-caterer/plan/<sys>.yaml` and `make seed SYS=<sys>` picks it
+up immediately — no other changes needed. Output paths in the plan must
+write under `/opt/app/data/<sys>/` to match the volume mount in
 `docker/docker-compose.seed.yaml`.
 
 See `banking.yaml`'s and `retail.yaml`'s header comments for the plan
-format and every real Data Caterer gotcha found building them (weighted
-`oneOf` unreliability, `foreignKeys` row-count quirks, deterministic
-alternatives to `foreignKeys`, etc.). Verify anything new directly
-against the real image (row counts, FK resolution) rather than trusting
-Data Caterer's docs -- both existing plans found real discrepancies this
-way.
+format and every Data Caterer gotcha found building them. Verify anything
+new directly against the real image — row counts, FK resolution — rather
+than trusting Data Caterer's documentation; see `CONTRIBUTING.md`.
 
-If the plan needs fix-up Data Caterer can't express (banking's
-loan-only Guarantor rule, retail's cross-step amount syncing), add an
-executable `data-caterer/postprocess/csv/<sys>.sh`; `make seed` runs it
-automatically after generation (FORMAT=csv; see the Postgres dump section
-for FORMAT=sql's equivalent), passing the output directory as `$1`. A
+If a plan needs fix-up Data Caterer can't express in-plan, add an
+executable `data-caterer/postprocess/csv/<sys>.sh` (and, for `FORMAT=sql`
+support, `data-caterer/postprocess/sql/<sys>.sql`). `make seed` runs it
+automatically after generation, passing the output directory as `$1`. A
 system with nothing to fix up just doesn't have one.
 
 ## As a submodule
@@ -103,55 +84,50 @@ system with nothing to fix up just doesn't have one.
 git submodule add https://github.com/avikbesu/seed-data-gen.git seed-data-gen
 ```
 
-Pin the checkout path in one Makefile variable rather than hardcoding it
-inline -- everything else in the target follows from that:
+Pin the checkout path in one Makefile variable instead of hardcoding it
+inline:
 
 ```makefile
 SEED_MODULE := seed-data-gen
 FORMAT ?= csv
 
 seed: ## Populate seed data for a system, e.g. `make seed SYS=banking` (or FORMAT=sql, for systems that support it)
-	@test -n "$(SYS)" || { echo "usage: make seed SYS=<system> [FORMAT=csv|sql]  (e.g. SYS=banking)" >&2; exit 1; }
+	@test -n "$(SYS)" || { echo "usage: make seed SYS=<system> [FORMAT=csv|sql]" >&2; exit 1; }
 	git submodule update --init $(SEED_MODULE)
-	@test -f $(SEED_MODULE)/data-caterer/plan/$(SYS).yaml || { echo "seed: no plan for SYS=$(SYS) (expected $(SEED_MODULE)/data-caterer/plan/$(SYS).yaml)" >&2; exit 1; }
+	@test -f $(SEED_MODULE)/data-caterer/plan/$(SYS).yaml || { echo "seed: no plan for SYS=$(SYS)" >&2; exit 1; }
 	$(MAKE) -C $(SEED_MODULE) seed SYS=$(SYS) FORMAT=$(FORMAT)
 	mkdir -p data
 	cp -r $(SEED_MODULE)/data/$(SYS) data/$(SYS)
 ```
 
-Works unmodified for every system this module provides, present or
-future -- `FORMAT` just passes through, and `data/$(SYS)/` holds whatever
-that run produced (CSVs, or a single `$(SYS).sql` for `FORMAT=sql`).
-`$(SEED_MODULE)` must match wherever `git submodule add` actually checked
-this out; update it there if the submodule moves. `FORMAT=sql` for a
-system that doesn't support it (no `@@CONN_TYPE@@` token in its plan)
-fails fast with a clear error, before touching Docker -- see "Postgres
-dump" above.
-
-The `cp` step is optional -- skip it and point consumers at
-`$(SEED_MODULE)/data/$(SYS)/` directly if you don't need a stable
-`data/<sys>` path decoupled from the submodule's own location.
+This works unmodified for every system the module provides, present or
+future; `FORMAT` passes straight through. `$(SEED_MODULE)` must match
+wherever `git submodule add` checked it out — update it there if the
+submodule moves. The `cp` step is optional: skip it and point consumers
+at `$(SEED_MODULE)/data/$(SYS)/` directly if a stable `data/<sys>` path
+decoupled from the submodule's location isn't needed.
 
 ## Layout
 
-- `docker/docker-compose.seed.yaml` -- one-shot service for `FORMAT=csv`,
-  parameterized by `SYS`.
-- `docker/docker-compose.postgres.yaml` -- ephemeral `postgres` +
-  `data-caterer` services for `FORMAT=sql`, torn down every run.
-- `data-caterer/script/seed.sh` -- the `make seed` implementation: renders
-  the plan and application.conf, then runs the right docker-compose flow.
-- `data-caterer/script/hoist.awk` -- resolves each step's
-  `options.csv`/`options.sql` to the flat shape Data Caterer expects.
-- `data-caterer/application.conf.template` -- Spark runtime defaults
-  (HOCON), rendered into `application.conf` (gitignored) each run.
-- `data-caterer/application-jdbc.conf.template` -- real Postgres
-  connection details, appended only for `FORMAT=sql`.
-- `data-caterer/plan/<sys>.yaml` -- one per system: schema, fields, and
-  relationships as one `dataSources` entry, rendered into
-  `data-caterer/plan/.rendered/<sys>.yaml` (gitignored) before every run.
-  `banking.yaml`'s header comment has the full design rationale.
-- `data-caterer/postprocess/csv/<sys>.sh` -- optional `FORMAT=csv` fixup.
-- `data-caterer/postprocess/sql/<sys>.sql` -- the `FORMAT=sql` equivalent,
-  run via `psql` against the live database.
-- `data-caterer/README.md` -- detailed notes on the banking dataset shape
-  and the Data Caterer 0.19.1 issues worked around in its plan.
+| Path | Purpose |
+|------|---------|
+| `data-caterer/plan/<sys>.yaml` | Schema, fields, and relationships for one system, as a single `dataSources` entry. Rendered into `data-caterer/plan/.rendered/<sys>.yaml` (gitignored) before every run. |
+| `data-caterer/script/seed.sh` | The `make seed` implementation. |
+| `data-caterer/script/hoist.awk` | Resolves each step's format-specific `options` down to the shape Data Caterer expects. |
+| `data-caterer/application.conf.template` | Spark runtime defaults, rendered into `application.conf` (gitignored) each run. |
+| `data-caterer/application-jdbc.conf.template` | Postgres connection details, appended only for `FORMAT=sql`. |
+| `data-caterer/postprocess/csv/<sys>.sh` | Optional `FORMAT=csv` fix-up. |
+| `data-caterer/postprocess/sql/<sys>.sql` | Optional `FORMAT=sql` fix-up, run via `psql`. |
+| `docker/docker-compose.seed.yaml` | One-shot service for `FORMAT=csv`. |
+| `docker/docker-compose.postgres.yaml` | Ephemeral Postgres + Data Caterer services for `FORMAT=sql`, torn down every run. |
+| `data-caterer/README.md` | Schema notes and every Data Caterer 0.19.1 issue worked around in the `banking` plan. |
+
+## Known limitations
+
+- `retail` has no `FORMAT=sql` support yet.
+- There is no fast syntax-check loop for editing a plan — every change
+  currently requires a full `make seed` run (Data Caterer's own JVM/Spark
+  startup is a ~20s floor). Tracked in
+  [#1](https://github.com/avikbesu/seed-data-gen/issues/1).
+
+See `CONTRIBUTING.md` before making changes.

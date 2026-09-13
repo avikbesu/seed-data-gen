@@ -20,6 +20,12 @@ services:
       ENABLE_DELETE_GENERATED_RECORDS: "false"
       DRIVER_MEMORY: "2g"
       EXECUTOR_MEMORY: "2g"
+      # Data Caterer's own log4j2.properties reads this directly
+      # (rootLogger.level=${env:LOG_LEVEL:-info}) -- confirmed directly:
+      # "warn" drops its noisy per-batch/per-sink [INFO ] lines while
+      # still surfacing [WARN ]/[ERROR] and any failure's full stack
+      # trace. Override per-run with `-e LOG_LEVEL=info` for full detail.
+      LOG_LEVEL: "warn"
     volumes:
       - "../data-caterer:/opt/app/custom"
       # CSVs land in the repo's data/${SYS}/ -- each step's options.csv.path

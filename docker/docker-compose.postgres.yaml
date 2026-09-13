@@ -35,5 +35,8 @@ services:
       ENABLE_DELETE_GENERATED_RECORDS: "false"
       DRIVER_MEMORY: "2g"
       EXECUTOR_MEMORY: "2g"
+      # See docker-compose.seed.yaml's comment -- same rootLogger.level
+      # override, confirmed the same way here.
+      LOG_LEVEL: "warn"
     volumes:
       - "../data-caterer:/opt/app/custom"
