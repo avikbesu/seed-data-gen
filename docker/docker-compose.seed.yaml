@@ -1,4 +1,4 @@
-# One-shot sample-data generator. Run via `make seed-banking` (docker
+# One-shot sample-data generator. Run via `make seed` (docker
 # compose ... run --rm, not up -d) from the repo root, or `docker compose
 # -f docker/docker-compose.seed.yaml run --rm data-caterer` directly.
 #

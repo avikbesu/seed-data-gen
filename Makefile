@@ -1,6 +1,6 @@
-.PHONY: seed-banking
+.PHONY: seed
 
-seed-banking: ## Generate a fresh, relationally-intact sample banking dataset as CSVs into data/banking/ (see data-caterer/plan/banking.yaml)
+seed: ## Generate a fresh, relationally-intact sample banking dataset as CSVs into data/banking/ (see data-caterer/plan/banking.yaml)
 	rm -rf data/banking
 	mkdir -p data/banking
 	# The data-caterer image writes as uid 1001, not the host user -- see

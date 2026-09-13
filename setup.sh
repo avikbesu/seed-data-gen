@@ -1,28 +1,31 @@
 #!/usr/bin/env bash
-# Generates the banking sample dataset and, if a destination path is
-# given, copies the result there (replacing whatever was at that path).
+# Links this seed module into a parent repo that has it added as a git
+# submodule (under any path/name), so the parent's own `make seed
+# SYS=banking` can find it.
 #
-# Every path below is resolved relative to this script's own location
-# (via BASH_SOURCE), not to the caller's current directory or any
-# hardcoded name -- so this works no matter what directory name or
-# nesting depth this repo is checked out under, e.g. as a git submodule
-# added at a path other than "seed-data-banking". A parent repo should
-# locate this script by identity (its git remote), not by a fixed path --
-# see README.md's "As a submodule" section for the pattern.
+# This resolves its own real location via BASH_SOURCE, not the caller's
+# current directory or any hardcoded name -- so it works no matter what
+# directory name or nesting depth this repo is checked out under, e.g.
+# as a git submodule added at a path other than "seed-data-banking".
 #
-# Usage:
-#   ./setup.sh                  # generate into ./data/banking only
-#   ./setup.sh /path/to/dest    # also copy the result to dest
+# Creates <target-repo-root>/.seed-modules/banking, a symlink pointing at
+# this submodule's real directory. From there, the parent repo's `make
+# seed SYS=banking` target runs `make -C .seed-modules/banking seed`
+# (this repo's own generation target -- see Makefile) and copies its
+# output into the parent repo's data/banking/. See README.md's "As a
+# submodule" section for the parent-side Makefile snippet.
+#
+# Usage (run once, from the target repo root, after `git submodule add`):
+#   ./path/to/seed-data-banking/setup.sh [target-repo-root]
+# target-repo-root defaults to the current directory.
 set -euo pipefail
 
+SYS="banking"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+TARGET_ROOT="$(cd "${1:-.}" && pwd)"
 
-make seed-banking
+mkdir -p "$TARGET_ROOT/.seed-modules"
+ln -sfn "$(realpath --relative-to="$TARGET_ROOT/.seed-modules" "$SCRIPT_DIR")" "$TARGET_ROOT/.seed-modules/$SYS"
 
-dest="${1:-}"
-if [ -n "$dest" ]; then
-	mkdir -p "$(dirname "$dest")"
-	rm -rf "$dest"
-	cp -r "$SCRIPT_DIR/data/banking" "$dest"
-fi
+echo "Linked .seed-modules/$SYS -> $SCRIPT_DIR"
+echo "Run: make seed SYS=$SYS   (from $TARGET_ROOT)"

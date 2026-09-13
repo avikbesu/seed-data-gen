@@ -2,7 +2,7 @@
 
 Generates a simplified, relationally-intact banking dataset as CSV files
 using [Data Caterer 0.19.1](https://data.catering/0.19.1/), a Spark-based
-data generation tool. Run via `make seed-banking` from the repo root.
+data generation tool. Run via `make seed` from the repo root.
 
 ## Layout
 
@@ -96,7 +96,7 @@ plan -- not assumptions, not present in the official docs' own examples
    **Worked around**: this can't be fixed inside the plan at all (it's
    the tool's generation order, not a syntax issue). `contract_role` is
    generated as a flat weighted pick with no loan-awareness, and
-   `make seed-banking` runs a small `awk` post-processing pass afterwards
+   `make seed` runs a small `awk` post-processing pass afterwards
    that swaps `Power of Attorney` to `Guarantor` wherever the contract's
    parent account is a Loan (recovering `account_type` from a 2-letter
    code embedded in `accounts.id`, since that's the only way to relate

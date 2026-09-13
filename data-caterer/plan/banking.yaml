@@ -87,7 +87,7 @@
 #      Worked around: this can't be fixed inside the plan at all (it's the
 #      tool's generation order, not a syntax issue) -- contract_role below
 #      is generated as a flat weighted pick with no loan-awareness, and
-#      `make seed-banking` runs a small `awk` post-processing pass
+#      `make seed` runs a small `awk` post-processing pass
 #      afterwards (see the Makefile) that swaps 'Power of Attorney' to
 #      'Guarantor' wherever the parent account's account_type is 'Loan'.
 #
