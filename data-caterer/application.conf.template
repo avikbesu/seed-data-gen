@@ -1,15 +1,26 @@
-# Baked-in defaults for the data-caterer seed job (see
-# docker/docker-compose.seed.yaml and plan/banking.yaml).
-# Mounted read-only at /opt/app/custom/application.conf.
+# Template for the baked-in defaults shared by every system's
+# data-caterer seed job (see docker/docker-compose.seed.yaml and
+# plan/*.yaml). `make seed SYS=<sys>` renders this into
+# application.conf (gitignored, regenerated every run) by substituting
+# @@SYS@@, then mounts that read-only at /opt/app/custom/application.conf.
+#
+# @@SYS@@ substitution exists because PLAN_FILE_PATH (the env var this
+# job also sets) does NOT override folders.planFilePath below when a
+# concrete application.conf is supplied -- confirmed directly: with two
+# plan files present, Data Caterer loaded the file named here regardless
+# of PLAN_FILE_PATH, and crashed trying to write that plan's steps into
+# the *other* system's unmounted output directory. So this file's own
+# planFilePath must always be correct for the system being run, which is
+# why it's templated per-run instead of static.
 #
 # Data Caterer's ConfigParser expects every one of these top-level blocks
 # to be present, even for a CSV-only, no-external-connection run like this
 # one -- this mirrors the shape of Data Caterer's own example
 # application.conf (example/docker/data/custom/application.conf in
 # data-catering/data-caterer), trimmed of the JDBC/Kafka/Cassandra/etc.
-# connection blocks that don't apply here. The plan itself
-# (plan/banking.yaml) carries its own `config:` block that overrides
-# flags/generation/folders for this specific run.
+# connection blocks that don't apply here. Each plan itself carries its
+# own `config:` block that overrides flags/generation/folders for that
+# specific run.
 flags {
     enableCount = true
     enableGenerateData = true
@@ -27,12 +38,12 @@ flags {
 
 folders {
     generatedPlanAndTaskFolderPath = "/opt/app/custom/generated"
-    planFilePath = "/opt/app/custom/plan/banking.yaml"
+    planFilePath = "/opt/app/custom/plan/@@SYS@@.yaml"
     taskFolderPath = "/opt/app/custom/task"
     validationFolderPath = "/opt/app/custom/validation"
     recordTrackingFolderPath = "/opt/app/custom/recordTracking"
     recordTrackingForValidationFolderPath = "/opt/app/custom/validation/recordTracking"
-    generatedReportsFolderPath = "/opt/app/data/report"
+    generatedReportsFolderPath = "/opt/app/data/@@SYS@@/report"
 }
 
 metadata {

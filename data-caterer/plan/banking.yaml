@@ -87,8 +87,8 @@
 #      Worked around: this can't be fixed inside the plan at all (it's the
 #      tool's generation order, not a syntax issue) -- contract_role below
 #      is generated as a flat weighted pick with no loan-awareness, and
-#      `make seed` runs a small `awk` post-processing pass
-#      afterwards (see the Makefile) that swaps 'Power of Attorney' to
+#      postprocess/banking.sh runs automatically after generation (see
+#      `make seed`'s target) and swaps 'Power of Attorney' to
 #      'Guarantor' wherever the parent account's account_type is 'Loan'.
 #
 #   6. A string literal inside one field's `sql` that exactly matches
@@ -111,7 +111,7 @@
 # **account_contracts.contract_role's loan-vs-other split happens outside
 # this plan entirely** -- see bug 5 above. accounts.id still embeds a
 # 2-letter account_type code right after the `ACC` prefix (e.g.
-# `ACCLN00000001` for Loan) purely so the Makefile's post-processing `awk`
+# `ACCLN00000001` for Loan) purely so postprocess/banking.sh's `awk`
 # step can recover each contract's parent account_type from accounts.csv
 # without a real join.
 version: "1.0"
@@ -587,9 +587,9 @@ dataSources:
               max: 1.0
           - name: "contract_role"
             # Flat weighted pick -- Power of Attorney here becomes
-            # Guarantor for Loan accounts via the Makefile's post-
-            # processing step, not here. See bug 5 in the file-level
-            # comment for why this can't be done in-plan.
+            # Guarantor for Loan accounts via postprocess/banking.sh,
+            # not here. See bug 5 in the file-level comment for why this
+            # can't be done in-plan.
             options:
               sql: >-
                 CASE

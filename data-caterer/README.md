@@ -2,14 +2,20 @@
 
 Generates a simplified, relationally-intact banking dataset as CSV files
 using [Data Caterer 0.19.1](https://data.catering/0.19.1/), a Spark-based
-data generation tool. Run via `make seed` from the repo root.
+data generation tool. Run via `make seed SYS=banking` from the repo root
+(`banking` is this system's name -- see the top-level README for how
+that maps to `plan/banking.yaml`).
 
 ## Layout
 
-- `application.conf` -- Spark runtime defaults (HOCON), mounted read-only.
-  Data Caterer's config parser requires the full `flags`/`folders`/etc.
-  block shape even for a CSV-only run; `../docker/docker-compose.seed.yaml`
-  mounts this whole directory at `/opt/app/custom`.
+- `application.conf.template` -- Spark runtime defaults (HOCON), shared
+  by every system. `make seed SYS=<sys>` renders this into
+  `application.conf` (gitignored) each run, substituting `@@SYS@@` --
+  see that template's header comment for why this is templated rather
+  than static. Data Caterer's config parser requires the full
+  `flags`/`folders`/etc. block shape even for a CSV-only run;
+  `../docker/docker-compose.seed.yaml` mounts this whole directory at
+  `/opt/app/custom`.
 - `plan/banking.yaml` -- the actual schema: 7 tables (`party`,
   `party_address`, `party_contact`, `party_profile`, `accounts`,
   `account_contracts`, `transactions`), their fields, and the
@@ -22,8 +28,9 @@ data generation tool. Run via `make seed` from the repo root.
   `party`'s 500 rows), weighted AU 60% / NZ 30% / {US, UK, NL, IN} 10%
   split evenly. `account_contracts.contract_role` is loan-aware
   (`Guarantor` only for Loan accounts, `Power of Attorney` for every
-  other type) -- enforced by the Makefile's post-processing step below,
-  not by the plan itself (see bug 5 in the plan's header comment).
+  other type) -- enforced by `postprocess/banking.sh`, run automatically
+  by `make seed` after generation, not by the plan itself (see bug 5 in
+  the plan's header comment).
 
 Output lands in `data/banking/` at the repo root (gitignored, like
 `watch/`/`state/`) -- one clean CSV file per table, with a header row and
@@ -96,10 +103,11 @@ plan -- not assumptions, not present in the official docs' own examples
    **Worked around**: this can't be fixed inside the plan at all (it's
    the tool's generation order, not a syntax issue). `contract_role` is
    generated as a flat weighted pick with no loan-awareness, and
-   `make seed` runs a small `awk` post-processing pass afterwards
-   that swaps `Power of Attorney` to `Guarantor` wherever the contract's
-   parent account is a Loan (recovering `account_type` from a 2-letter
-   code embedded in `accounts.id`, since that's the only way to relate
+   `postprocess/banking.sh` runs automatically after generation (see
+   `make seed`'s target) and swaps `Power of Attorney` to `Guarantor`
+   wherever the contract's parent account is a Loan (recovering
+   `account_type` from a 2-letter code embedded in `accounts.id`, since
+   that's the only way to relate
    the two CSVs without a real join).
 
 6. **A string literal inside one field's `sql` that exactly matches

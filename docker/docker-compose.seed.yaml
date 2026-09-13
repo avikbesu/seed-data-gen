@@ -1,19 +1,28 @@
-# One-shot sample-data generator. Run via `make seed` (docker
-# compose ... run --rm, not up -d) from the repo root, or `docker compose
-# -f docker/docker-compose.seed.yaml run --rm data-caterer` directly.
+# One-shot sample-data generator, parameterized by SYS -- which
+# data-caterer/plan/<SYS>.yaml to run. Run via `make seed SYS=<sys>`
+# (docker compose ... run --rm, not up -d) from the repo root, or
+# `SYS=<sys> docker compose -f docker/docker-compose.seed.yaml run --rm
+# data-caterer` directly.
 #
 # Uses Data Caterer (https://data.catering/0.19.1/) to generate a
-# relationally-intact simplified banking dataset (party/account/transaction
-# tables with real foreign keys between them) as CSV files -- see
-# data-caterer/plan/banking.yaml for the schema/relationships and
-# data-caterer/application.conf for the Spark runtime defaults. No seed is
-# set in the plan, so every run produces a different dataset.
+# relationally-intact sample dataset as CSV files -- see
+# data-caterer/plan/${SYS}.yaml for that system's schema/relationships.
+# No seed is set in any plan, so every run produces a different dataset.
+#
+# APPLICATION_CONFIG_PATH points at application.conf, which `make seed`
+# regenerates from application.conf.template every run with @@SYS@@
+# substituted -- that's the actual mechanism selecting which plan gets
+# loaded. PLAN_FILE_PATH below is set to the same value too, but on its
+# own it does NOT override application.conf's own planFilePath when a
+# concrete config file is supplied (confirmed directly, see
+# application.conf.template's header comment) -- kept here in case a
+# future Data Caterer version honors it, not relied on.
 services:
   data-caterer:
     image: "datacatering/data-caterer:0.19.1"
     environment:
       APPLICATION_CONFIG_PATH: "/opt/app/custom/application.conf"
-      PLAN_FILE_PATH: "/opt/app/custom/plan/banking.yaml"
+      PLAN_FILE_PATH: "/opt/app/custom/plan/${SYS:?SYS is required, e.g. SYS=banking}.yaml"
       ENABLE_GENERATE_DATA: "true"
       ENABLE_RECORD_TRACKING: "false"
       ENABLE_GENERATE_PLAN_AND_TASKS: "false"
@@ -22,8 +31,9 @@ services:
       EXECUTOR_MEMORY: "2g"
     volumes:
       - "../data-caterer:/opt/app/custom"
-      # CSVs land directly in the repo's data/banking/ -- see
-      # plan/banking.yaml's per-step `options.path` (each ends in .csv, so
-      # Data Caterer consolidates Spark's part-files into one clean file
-      # per table instead of a part-*.csv directory).
-      - "../data/banking:/opt/app/data/banking"
+      # CSVs land directly in the repo's data/${SYS}/ -- see that
+      # system's plan file's per-step `options.path` (each ends in .csv,
+      # so Data Caterer consolidates Spark's part-files into one clean
+      # file per table instead of a part-*.csv directory). Each plan's
+      # own paths must use /opt/app/data/<that plan's SYS>/... to match.
+      - "../data/${SYS}:/opt/app/data/${SYS}"
