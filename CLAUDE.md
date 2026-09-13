@@ -13,8 +13,7 @@ For full agent-facing guidance (build/run/verify, layout, gotchas), see
 - This generates relationally-intact sample datasets via
   [Data Caterer 0.19.1](https://data.catering/0.19.1/) (Spark-based), driven
   entirely by Docker — no other dependency. Meant to be dropped into other
-  repos as a git submodule (see README.md's "As a submodule" section and
-  `setup.sh`).
+  repos as a git submodule (see README.md's "As a submodule" section).
 - Each dataset is a "system": `data-caterer/plan/<sys>.yaml` plus an optional
   `data-caterer/postprocess/<sys>.sh`. Two exist today: `banking` (party,
   accounts, transactions) and `retail` (customer, supplier, product, order,
@@ -37,5 +36,5 @@ For full agent-facing guidance (build/run/verify, layout, gotchas), see
   favor of a deterministic closed-form cumulative-sum encoding, after
   `foreignKeys` + `count.perField` was tested and found to only cover
   ~25-27% of parent rows.
-- `data/`, `.seed-modules/`, and `data-caterer/application.conf` are
-  gitignored/regenerated on every run — never commit them.
+- `data/` and `data-caterer/application.conf` are gitignored/regenerated on
+  every run — never commit them.

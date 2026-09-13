@@ -64,35 +64,29 @@ have one.
 git submodule add https://github.com/avikbesu/seed-data-gen.git seed-data-gen
 ```
 
-The path you give `git submodule add` is just a suggestion -- nothing in
-this repo depends on it, and nothing in the parent repo should hardcode
-it either (submodules get renamed/moved). Instead, run `setup.sh` once
-from the parent repo's root (`./path/to/seed-data-gen/setup.sh`,
-wherever the submodule actually landed) -- it's self-locating (resolves
-every path from its own location via `BASH_SOURCE`), and it links itself
-into the parent repo at a fixed, predictable path per system it finds:
-`.seed-modules/<sys>` for each `data-caterer/plan/<sys>.yaml` -- e.g.
-`.seed-modules/banking` today, regardless of the submodule's real path.
-
-The parent repo's own Makefile then only ever needs to know about that
-fixed `.seed-modules/<sys>` convention, never the submodule's actual
-location or how many systems it provides:
+Pin the checkout path in one Makefile variable rather than hardcoding it
+inline -- everything else in the target follows from that:
 
 ```makefile
-seed: ## Populate seed data for a system, e.g. `make seed SYS=banking` (link it first: run <module>/setup.sh once)
+SEED_MODULE := seed-data-gen
+
+seed: ## Populate seed data for a system, e.g. `make seed SYS=banking`
 	@test -n "$(SYS)" || { echo "usage: make seed SYS=<system>  (e.g. SYS=banking)" >&2; exit 1; }
-	@test -d .seed-modules/$(SYS) || { echo "seed: no module linked for SYS=$(SYS) -- run its setup.sh from the repo root first" >&2; exit 1; }
-	rm -rf data/$(SYS)
-	$(MAKE) -C .seed-modules/$(SYS) seed SYS=$(SYS)
+	git submodule update --init $(SEED_MODULE)
+	@test -f $(SEED_MODULE)/data-caterer/plan/$(SYS).yaml || { echo "seed: no plan for SYS=$(SYS) (expected $(SEED_MODULE)/data-caterer/plan/$(SYS).yaml)" >&2; exit 1; }
+	$(MAKE) -C $(SEED_MODULE) seed SYS=$(SYS)
 	mkdir -p data
-	cp -r .seed-modules/$(SYS)/data/$(SYS) data/$(SYS)
+	cp -r $(SEED_MODULE)/data/$(SYS) data/$(SYS)
 ```
 
-This one target works unmodified for every system any linked module
-provides, present or future -- a parent repo seeding multiple systems
-(from this module or several) needs no per-system Makefile logic. Add
-`.seed-modules/` to the parent repo's `.gitignore` -- it's local,
-regenerated linkage, not something to commit.
+This one target works unmodified for every system this module provides,
+present or future -- no per-system Makefile logic needed. `$(SEED_MODULE)`
+must match wherever `git submodule add` actually checked this out; update
+it there if the submodule is ever moved or renamed.
+
+The `cp` step is optional -- skip `mkdir -p data` / `cp -r ...` and point
+consumers at `$(SEED_MODULE)/data/$(SYS)/` directly if you don't need a
+stable `data/<sys>` path decoupled from the submodule's own location.
 
 ## Layout
 
