@@ -9,8 +9,12 @@ adds what those don't cover.
 
 ## Agent-specific notes
 
-- There is no test suite. Treat `make seed SYS=<sys>` against the real
-  `datacatering/data-caterer:0.19.1` image as the test: after any plan or
+- There is no test suite. `make validate-plan SYS=<sys>` is a fast lint
+  (rules in `data-caterer/script/plan-rules.yaml`, applied by
+  `validate_plan.py` in a one-off `python:3.12-slim` container — see
+  CLAUDE.md's "Writing or editing a plan file") — it catches known-bad
+  patterns but is not verification. Treat `make seed SYS=<sys>` against the real
+  `datacatering/data-caterer:0.19.1` image as the real test: after any plan or
   postprocess change, run it and check the output CSVs in `data/<sys>/`
   (gitignored) for correct row counts and zero orphan foreign keys.
 - Never take Data Caterer's documented behavior on trust — every workaround

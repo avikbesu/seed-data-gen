@@ -1,5 +1,5 @@
 # Simplified banking system sample data -- unified Data Caterer plan (see
-# https://data.catering/0.19.1/ and docker/docker-compose.seed.yaml).
+# https://data.catering/0.19.1/ and config/docker/docker-compose.seed.yaml).
 #
 # Schema:
 #   party            -- one row per party (person); FK to a contact

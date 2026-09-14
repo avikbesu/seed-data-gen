@@ -39,4 +39,4 @@ services:
       # override, confirmed the same way here.
       LOG_LEVEL: "warn"
     volumes:
-      - "../data-caterer:/opt/app/custom"
+      - "../../data-caterer:/opt/app/custom"

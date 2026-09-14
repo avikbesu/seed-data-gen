@@ -1,7 +1,7 @@
 # One-shot CSV generator (FORMAT=csv), parameterized by SYS. Run via
 # `make seed SYS=<sys>` from the repo root, or `SYS=<sys> docker compose
-# -f docker/docker-compose.seed.yaml run --rm data-caterer` directly. No
-# seed is set in any plan, so every run produces a different dataset.
+# -f config/docker/docker-compose.seed.yaml run --rm data-caterer` directly.
+# No seed is set in any plan, so every run produces a different dataset.
 #
 # APPLICATION_CONFIG_PATH is the mechanism that actually selects the
 # plan (application.conf.template's planFilePath, rendered per-run).
@@ -27,7 +27,7 @@ services:
       # trace. Override per-run with `-e LOG_LEVEL=info` for full detail.
       LOG_LEVEL: "warn"
     volumes:
-      - "../data-caterer:/opt/app/custom"
+      - "../../data-caterer:/opt/app/custom"
       # CSVs land in the repo's data/${SYS}/ -- each step's options.csv.path
       # must use /opt/app/data/<sys>/... to match this mount.
-      - "../data/${SYS}:/opt/app/data/${SYS}"
+      - "../../data/${SYS}:/opt/app/data/${SYS}"

@@ -2,13 +2,14 @@
 # Generates SYS's sample data in the given FORMAT (csv, default; or sql,
 # a Postgres dump) -- see `make seed SYS=<sys> [FORMAT=csv|sql]`.
 #
-# Renders plan/<sys>.yaml into plan/.rendered/<sys>.yaml (gitignored,
-# what application.conf.template's planFilePath points at): substitutes
+# Renders config/generator/plan/<sys>.yaml (the source of truth) into this
+# directory's plan/.rendered/<sys>.yaml (gitignored, what
+# application.conf.template's planFilePath points at): substitutes
 # connection.type, then pipes through hoist.awk to resolve each step's
 # options.csv/options.sql down to the flat shape Data Caterer expects --
-# see plan/banking.yaml's own header comment for the full rationale. A
-# plan with none of those tokens (not every system needs a Postgres
-# target) renders unchanged.
+# see config/generator/plan/banking.yaml's own header comment for the full
+# rationale. A plan with none of those tokens (not every system needs a
+# Postgres target) renders unchanged.
 #
 # Usage: data-caterer/script/seed.sh <sys> [format]   (e.g. banking sql)
 set -euo pipefail
@@ -30,7 +31,7 @@ case "$format" in
 		# of the live database -- pg_dump then produces a real-looking
 		# but completely empty <sys>.sql (CREATE DATABASE, no tables, no
 		# data), exit code 0. Confirmed directly.
-		if ! grep -q '@@CONN_TYPE@@' "data-caterer/plan/$sys.yaml"; then
+		if ! grep -q '@@CONN_TYPE@@' "config/generator/plan/$sys.yaml"; then
 			echo "seed.sh: SYS=$sys has no FORMAT=sql support (no @@CONN_TYPE@@ token in its plan) -- see README's Postgres dump section" >&2
 			exit 1
 		fi
@@ -43,7 +44,7 @@ esac
 
 mkdir -p data-caterer/plan/.rendered
 
-sed "s/@@CONN_TYPE@@/$conn_type/g" "data-caterer/plan/$sys.yaml" \
+sed "s/@@CONN_TYPE@@/$conn_type/g" "config/generator/plan/$sys.yaml" \
 	| awk -v ACTIVE="$format" -f data-caterer/script/hoist.awk \
 	> "data-caterer/plan/.rendered/$sys.yaml"
 
@@ -60,9 +61,9 @@ if [ "$format" = "csv" ]; then
 	rm -rf "data/$sys"
 	mkdir -p "data/$sys"
 	# The data-caterer image writes as uid 1001, not the host user -- see
-	# docker/docker-compose.seed.yaml.
+	# config/docker/docker-compose.seed.yaml.
 	chmod 777 "data/$sys"
-	SYS="$sys" docker compose -f docker/docker-compose.seed.yaml run --rm data-caterer
+	SYS="$sys" docker compose -f config/docker/docker-compose.seed.yaml run --rm data-caterer
 	# A system can optionally fix up what Data Caterer can't express in
 	# the plan itself (see data-caterer/postprocess/csv/banking.sh for why
 	# banking needs this) -- run it if present, skip it otherwise.
@@ -71,7 +72,7 @@ if [ "$format" = "csv" ]; then
 		"data-caterer/postprocess/csv/$sys.sh" "data/$sys"
 	fi
 else
-	compose=(docker compose -f docker/docker-compose.postgres.yaml)
+	compose=(docker compose -f config/docker/docker-compose.postgres.yaml)
 	cleanup() {
 		SYS="$sys" "${compose[@]}" down -v
 	}

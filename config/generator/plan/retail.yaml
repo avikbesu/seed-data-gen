@@ -1,5 +1,5 @@
 # Simplified retail store sample data -- unified Data Caterer plan (see
-# https://data.catering/0.19.1/ and docker/docker-compose.seed.yaml).
+# https://data.catering/0.19.1/ and config/docker/docker-compose.seed.yaml).
 #
 # Schema:
 #   customer         -- one row per customer
@@ -13,10 +13,21 @@
 #   order_item       -- 1-5 product lines per order, deterministically,
 #                        not via `foreignKeys` (see that step's comment)
 #   invoice          -- 1:1 with order; amounts recomputed by
-#                        postprocess/csv/retail.sh from order_item totals
+#                        postprocess/csv/retail.sh (FORMAT=csv) or
+#                        postprocess/sql/retail.sql (FORMAT=sql) from
+#                        order_item totals
 #
 # Date/timestamp fields are Australia/Sydney wall-clock time. No
 # sinkOptions.seed is set -- every run produces a different dataset.
+#
+# **Two formats, one dataSources entry**: same mechanism as
+# banking.yaml -- `connection.type: "@@CONN_TYPE@@"` and each step's
+# `options: {csv: {...}, sql: {...}}` are resolved at render time by
+# data-caterer/script/seed.sh + hoist.awk, not duplicated. dataSources.name
+# is "retail" (not "retail_csv" as before this was dual-format), matching
+# `@@SYS@@` so application-jdbc.conf.template's generic `jdbc { "@@SYS@@"
+# {...} }` block resolves for FORMAT=sql. See banking.yaml's own header
+# comment for the full mechanism and the real Data Caterer bugs behind it.
 #
 # Unlike banking.yaml, this plan uses NO `foreignKeys` block at all --
 # every many-to-one reference is a deterministic hash of the row's own
@@ -38,15 +49,25 @@
 # A field's `sql` can only see other fields in its OWN row of its OWN
 # step (same class of limitation as banking.yaml bug 5) -- so
 # order_item.unit_price/invoice.subtotal_amount are generated as random
-# placeholders here and corrected by postprocess/csv/retail.sh after
-# generation.
+# placeholders here and corrected by postprocess/csv/retail.sh
+# (FORMAT=csv) or postprocess/sql/retail.sql (FORMAT=sql, via psql)
+# after generation.
 #
-# Verified directly against the real image (`make seed SYS=retail`), not
-# assumed: every FK-shaped value resolves to a real parent row, row
-# counts land where expected, and (after the postprocess script runs)
-# every order_item's line_total matches its product's real price x
-# quantity, and every invoice's subtotal_amount matches its order's real
-# order_item sum.
+# **Real Data Caterer/Spark JDBC bug found adding FORMAT=sql here**: the
+# `order` step's `options.sql.dbtable` can't be `"order"` -- Spark's
+# Postgres JDBC writer emits an unquoted `CREATE TABLE order (...)`,
+# which Postgres rejects (`order` is a reserved word): confirmed
+# directly (`ERROR: syntax error at or near "order"`). Worked around by
+# naming the table `orders` instead -- only the SQL table name, the CSV
+# file stays `order.csv`.
+#
+# Verified directly against the real image (`make seed SYS=retail` and
+# `make seed SYS=retail FORMAT=sql`), not assumed: every FK-shaped value
+# resolves to a real parent row, row counts land where expected, and
+# (after the postprocess step runs) every order_item's line_total
+# matches its product's real price x quantity, and every invoice's
+# subtotal_amount matches its order's real order_item sum -- in both
+# formats.
 version: "1.0"
 name: "retail_sample_data"
 description: "Simplified retail store sample data with intact customer/supplier/product/order relationships"
@@ -61,15 +82,18 @@ config:
     generatedReportsFolderPath: "/opt/app/data/report"
 
 dataSources:
-  - name: "retail_csv"
+  - name: "retail"
     connection:
-      type: "csv"
+      type: "@@CONN_TYPE@@"
     steps:
       # ----- customer ------------------------------------------------------
       - name: "customer"
         options:
-          path: "/opt/app/data/retail/customer.csv"
-          header: true
+          csv:
+            path: "/opt/app/data/retail/customer.csv"
+            header: true
+          sql:
+            dbtable: "customer"
         count:
           records: 300
         fields:
@@ -132,8 +156,11 @@ dataSources:
       # product.supplier_id below), not an internal store department.
       - name: "supplier"
         options:
-          path: "/opt/app/data/retail/supplier.csv"
-          header: true
+          csv:
+            path: "/opt/app/data/retail/supplier.csv"
+            header: true
+          sql:
+            dbtable: "supplier"
         count:
           records: 40
         fields:
@@ -185,12 +212,15 @@ dataSources:
 
       # ----- product -------------------------------------------------------
       # supplier_id: deterministic scattered pick across supplier's 40-row
-      # range (see file-level comment). price is the source of truth
-      # postprocess/csv/retail.sh uses to correct order_item.unit_price.
+      # range (see file-level comment). price is the source of truth the
+      # postprocess step uses to correct order_item.unit_price.
       - name: "product"
         options:
-          path: "/opt/app/data/retail/product.csv"
-          header: true
+          csv:
+            path: "/opt/app/data/retail/product.csv"
+            header: true
+          sql:
+            dbtable: "product"
         count:
           records: 200
         fields:
@@ -257,8 +287,11 @@ dataSources:
       # and product above), employees work for the store itself.
       - name: "employee"
         options:
-          path: "/opt/app/data/retail/employee.csv"
-          header: true
+          csv:
+            path: "/opt/app/data/retail/employee.csv"
+            header: true
+          sql:
+            dbtable: "employee"
         count:
           records: 20
         fields:
@@ -323,8 +356,11 @@ dataSources:
       # so employees don't all share the same days off.
       - name: "shift_roster"
         options:
-          path: "/opt/app/data/retail/shift_roster.csv"
-          header: true
+          csv:
+            path: "/opt/app/data/retail/shift_roster.csv"
+            header: true
+          sql:
+            dbtable: "shift_roster"
         count:
           records: 100
         fields:
@@ -417,12 +453,20 @@ dataSources:
       # file-level comment. employee_id is who processed/handled the
       # order (e.g. the cashier who rang it up), not a purchasing agent.
       # No amount field here -- an order's real total is the sum of its
-      # order_item lines, owned by invoice.subtotal_amount after
-      # postprocess/csv/retail.sh runs (see order_item and invoice below).
+      # order_item lines, owned by invoice.subtotal_amount after the
+      # postprocess step runs (see order_item and invoice below).
       - name: "order"
         options:
-          path: "/opt/app/data/retail/order.csv"
-          header: true
+          csv:
+            path: "/opt/app/data/retail/order.csv"
+            header: true
+          sql:
+            # "order" is a reserved word -- Postgres rejects CREATE TABLE
+            # order unquoted, and Spark's JDBC writer doesn't quote table
+            # names (confirmed directly: "syntax error at or near
+            # \"order\""). "orders" only affects the SQL table name, not
+            # the CSV file name above.
+            dbtable: "orders"
         count:
           records: 2000
         fields:
@@ -506,12 +550,15 @@ dataSources:
       # coverage, verified after generation.
       #
       # unit_price/line_total are random placeholders (sql can't reach
-      # product.price -- file-level comment), corrected by
-      # postprocess/csv/retail.sh after generation.
+      # product.price -- file-level comment), corrected by the
+      # postprocess step after generation.
       - name: "order_item"
         options:
-          path: "/opt/app/data/retail/order_item.csv"
-          header: true
+          csv:
+            path: "/opt/app/data/retail/order_item.csv"
+            header: true
+          sql:
+            dbtable: "order_item"
         count:
           records: 6000
         fields:
@@ -588,14 +635,17 @@ dataSources:
       # at 2000 rows) -- same technique as party <-> party_contact in
       # banking.yaml, not `foreignKeys`. subtotal_amount/tax_amount/
       # total_amount are independently-random placeholders here -- see
-      # file-level comment for why -- corrected by postprocess/csv/retail.sh
+      # file-level comment for why -- corrected by the postprocess step
       # from order_item's real totals after generation. tax_rate and
       # payment_status/paid_date are left as generated (not derived from
       # anything else).
       - name: "invoice"
         options:
-          path: "/opt/app/data/retail/invoice.csv"
-          header: true
+          csv:
+            path: "/opt/app/data/retail/invoice.csv"
+            header: true
+          sql:
+            dbtable: "invoice"
         count:
           records: 2000
         fields:

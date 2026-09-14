@@ -11,7 +11,7 @@ from the repo root.
   by every system, rendered into `application.conf` (gitignored) each run
   with `@@SYS@@` substituted. `application-jdbc.conf.template` adds the
   real Postgres connection details, appended only for `FORMAT=sql`.
-- `plan/banking.yaml` -- the schema (7 tables: `party`, `party_address`,
+- `../config/generator/plan/banking.yaml` -- the schema (7 tables: `party`, `party_address`,
   `party_contact`, `party_profile`, `accounts`, `account_contracts`,
   `transactions`), fields, and relationships, for both formats. See that
   file's own header comment for the full design rationale, every real

@@ -1,0 +1,9 @@
+# Formats seed-data-gen supports, irrespective of system. Every plan step's
+# options: must declare a sub-block per format here, containing that
+# format's required keys -- see CONTRIBUTING.md's "Writing a plan file".
+# Read by data-caterer/script/validate_plan.py's dual-format-options rule.
+formats:
+  csv:
+    required_keys: ["path", "header"]
+  sql:
+    required_keys: ["dbtable"]

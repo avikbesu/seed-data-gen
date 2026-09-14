@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Blocks a commit that stages an invalid data-caterer plan file. Validates
+# the STAGED content (not the working tree, so partially-staged edits are
+# checked correctly) via validate_plan.py, run in a one-off Python
+# container -- see data-caterer/script/validate-plan.sh's header comment.
+#
+# Installed via `make install-hooks` (sets core.hooksPath). Bypass once
+# with `git commit --no-verify` if you genuinely need to.
+set -euo pipefail
+
+PYTHON_IMAGE="python:3.12-slim"
+
+repo_root="$(git rev-parse --show-toplevel)"
+mapfile -t staged < <(git diff --cached --name-only --diff-filter=ACM -- 'config/generator/plan/*.yaml')
+
+if [ "${#staged[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+# Repo root is mounted too (read-only) so validate_plan.py's relative
+# read of config/generator/common/datasources.yaml resolves -- only the
+# plan files themselves come from the staged-content mount below.
+args=(--rules data-caterer/script/plan-rules.yaml)
+for f in "${staged[@]}"; do
+  base="$(basename "$f")"
+  git show ":$f" > "$tmp/$base"
+  args+=(--file "/staged/$base:$f")
+done
+
+status=0
+docker run --rm \
+  -v "$repo_root":/repo:ro \
+  -v "$tmp":/staged:ro \
+  -w /repo \
+  "$PYTHON_IMAGE" \
+  python3 data-caterer/script/validate_plan.py "${args[@]}" || status=$?
+
+if [ "$status" -ne 0 ]; then
+  echo "" >&2
+  echo "pre-commit: fix the plan issue(s) above, or bypass with 'git commit --no-verify'." >&2
+fi
+exit "$status"
