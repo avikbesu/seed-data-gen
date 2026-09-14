@@ -1,17 +1,15 @@
-# Declarative rules for validate_plan.py. Each rule encodes either a
-# confirmed Data Caterer 0.19.1 bug or a plan convention -- see
-# CONTRIBUTING.md's "Writing a plan file" section for the human-readable
-# checklist and each plan's header comment for the bug writeups.
-# Line-ban rules are pure regex and need no engine change to add/edit;
-# the other rule kinds are parameterized versions of a fixed check (e.g.
-# "a field name suffix implies a type+options shape") -- adding a new
-# rule of an existing kind is still just YAML, a genuinely new kind of
-# check needs a matching function in validate_plan.py.
+# Declarative rules for validate_plan.py. Each rule encodes a confirmed
+# Data Caterer 0.19.1 bug or a plan convention -- see CONTRIBUTING.md's
+# "Writing a plan file" checklist and each plan's header for the bug
+# writeups. Line-ban rules are pure regex, no engine change needed to
+# add one; the other kinds are parameterized checks (e.g. "a field name
+# suffix implies a type+options shape") -- a new rule of an existing
+# kind is YAML-only, a genuinely new kind needs a function in
+# validate_plan.py.
 #
-# Parsed by plan_yaml.py -- a hand-rolled loader for this repo's own YAML
-# subset, not a general parser. Keep authoring within that subset: 2-space
-# block indent, flow-style [a, b] lists, quoted or plain scalars. See
-# plan_yaml.py's own header comment for exactly what it supports.
+# Parsed by plan_yaml.py (a hand-rolled loader for this repo's own YAML
+# subset, not a general parser) -- keep authoring within that subset:
+# 2-space block indent, flow-style [a, b] lists, quoted or plain scalars.
 
 required_top_level_keys: ["version", "name", "description", "config", "dataSources"]
 

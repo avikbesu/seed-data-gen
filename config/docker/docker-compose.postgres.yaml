@@ -1,13 +1,12 @@
-# Ephemeral Postgres target, parameterized by SYS -- data-caterer/script/seed.sh
-# (FORMAT=sql) starts `postgres` here, runs Data Caterer against the
-# rendered plan/.rendered/${SYS}.yaml (see banking.yaml's own comment),
-# pg_dumps the result, then tears everything down (`docker compose ...
-# down -v`). Never run via `up -d` on its own for anything long-lived.
+# Ephemeral Postgres target, parameterized by SYS -- seed.sh (FORMAT=sql)
+# starts `postgres` here, runs Data Caterer against it, pg_dumps the
+# result, then tears everything down (`docker compose ... down -v`).
+# Never run via `up -d` on its own for anything long-lived.
 #
-# No host port published -- data-caterer reaches `postgres` by service
-# name over this compose file's own network, and seed.sh talks to it via
-# `docker compose exec`, never the host network. Fixed dev credentials
-# are fine: never reachable outside Docker, never persists past one run.
+# No host port published: data-caterer reaches `postgres` by service
+# name over this network, and seed.sh talks to it via `docker compose
+# exec`, never the host network. Fixed dev credentials are fine --
+# never reachable outside Docker, never persists past one run.
 services:
   postgres:
     image: "postgres:16.4"
@@ -27,8 +26,8 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      APPLICATION_CONFIG_PATH: "/opt/app/custom/application.conf"
-      PLAN_FILE_PATH: "/opt/app/custom/plan/.rendered/${SYS:?SYS is required, e.g. SYS=banking}.yaml"
+      APPLICATION_CONFIG_PATH: "/opt/app/custom/.rendered/application.conf"
+      PLAN_FILE_PATH: "/opt/app/custom/.rendered/plan/${SYS:?SYS is required, e.g. SYS=banking}.yaml"
       ENABLE_GENERATE_DATA: "true"
       ENABLE_RECORD_TRACKING: "false"
       ENABLE_GENERATE_PLAN_AND_TASKS: "false"

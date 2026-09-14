@@ -21,24 +21,25 @@ don't leave it as an undocumented one-off workaround.
 
 ## Adding or changing a system
 
-- Drop in `config/generator/plan/<sys>.yaml`. `make seed SYS=<sys>` picks
-  it up immediately for `FORMAT=csv` — no other changes needed.
+- Drop in `config/generator/plan/<sys>/plan.yaml`. `make seed SYS=<sys>`
+  picks it up immediately for `FORMAT=csv` — no other changes needed.
 - After any plan change, verify row counts and FK resolution directly.
   Don't assume `foreignKeys` / `count.perField` behave the same way for a
   new relationship shape just because they did for an existing one — see
   the bugs already catalogued for how easily this breaks.
 - If the plan needs fix-up Data Caterer can't express in-plan, add
-  `data-caterer/postprocess/csv/<sys>.sh`, run automatically after
-  generation with the output directory as `$1`. A system with nothing to
-  fix up simply has no such script.
-- To add `FORMAT=sql` support, follow `banking.yaml`: one `dataSources`
+  `config/generator/plan/<sys>/postprocess/csv.sh`, run automatically
+  after generation with the output directory as `$1`. A system with
+  nothing to fix up simply has no such script.
+- To add `FORMAT=sql` support, follow `banking`: one `dataSources`
   entry, `connection.type: "@@CONN_TYPE@@"`, and each step's
   `options: {csv: {...}, sql: {...}}`. Never duplicate the `dataSources`
   entry — Data Caterer's YAML parser does not support anchors/aliases.
-  Add a matching `jdbc { <sys> {...} }` block to
-  `application-jdbc.conf.template` if the existing one isn't generic
-  enough, and a fixup under `data-caterer/postprocess/sql/<sys>.sql` if
-  needed.
+  If the existing generic `jdbc { "@@SYS@@" {...} }` block in
+  `config/generator/common/application.conf.template` (between its
+  `@@JDBC_BLOCK_START@@`/`@@JDBC_BLOCK_END@@` markers) isn't generic
+  enough for the new system, adjust it there, and add a fixup under
+  `config/generator/plan/<sys>/postprocess/sql.sql` if needed.
 - Every step's `options` must declare a sub-block for every format
   listed in `config/generator/common/datasources.yaml` (currently `csv`
   and `sql`, unconditionally — not just for systems that opt into
@@ -102,10 +103,10 @@ checks the rule-based subset of the checklist above. It's a lint, not a
 substitute for a real `make seed` run — that's still the only way to
 confirm row counts and FK resolution.
 
-The rules themselves live in `data-caterer/script/plan-rules.yaml`, a
-declarative list (regex bans, required keys, a field-name-suffix →
+The rules themselves live in `data-caterer/script/validate/plan-rules.yaml`,
+a declarative list (regex bans, required keys, a field-name-suffix →
 type/options convention, etc.) applied by
-`data-caterer/script/validate_plan.py`. Adding a rule of an existing
+`data-caterer/script/validate/validate_plan.py`. Adding a rule of an existing
 kind (another line-ban regex, another `_bucket`-style suffix
 convention, another required key) is a YAML-only change; a genuinely
 new *kind* of check needs a matching function in `validate_plan.py`.
@@ -161,15 +162,16 @@ special-cased per call site.
 
 ## Generated output
 
-`data/`, `data-caterer/application.conf`, and
-`data-caterer/plan/.rendered/` are gitignored and regenerated on every
-run — never commit them. Add any new generated path to `.gitignore`.
+`data/` and `data-caterer/.rendered/` (which holds both the per-run
+`application.conf` and the rendered `plan/<sys>.yaml`) are gitignored
+and regenerated on every run — never commit them. Add any new generated
+path to `.gitignore`.
 
 ## Testing `FORMAT=sql` changes
 
 `make seed SYS=<sys> FORMAT=sql` starts an ephemeral Postgres and tears
 it down on exit, including on failure (see the `trap` in
-`data-caterer/script/seed.sh`). To inspect the container while debugging,
+`data-caterer/script/seed/seed.sh`). To inspect the container while debugging,
 comment out `trap cleanup EXIT` temporarily — never commit that change.
 
 ## Commit and PR attribution

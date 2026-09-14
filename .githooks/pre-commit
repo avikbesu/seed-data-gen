@@ -2,7 +2,8 @@
 # Blocks a commit that stages an invalid data-caterer plan file. Validates
 # the STAGED content (not the working tree, so partially-staged edits are
 # checked correctly) via validate_plan.py, run in a one-off Python
-# container -- see data-caterer/script/validate-plan.sh's header comment.
+# container -- see data-caterer/script/validate/validate-plan.sh's header
+# comment.
 #
 # Installed via `make install-hooks` (sets core.hooksPath). Bypass once
 # with `git commit --no-verify` if you genuinely need to.
@@ -11,7 +12,7 @@ set -euo pipefail
 PYTHON_IMAGE="python:3.12-slim"
 
 repo_root="$(git rev-parse --show-toplevel)"
-mapfile -t staged < <(git diff --cached --name-only --diff-filter=ACM -- 'config/generator/plan/*.yaml')
+mapfile -t staged < <(git diff --cached --name-only --diff-filter=ACM -- 'config/generator/plan/*/plan.yaml')
 
 if [ "${#staged[@]}" -eq 0 ]; then
   exit 0
@@ -20,14 +21,17 @@ fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-# Repo root is mounted too (read-only) so validate_plan.py's relative
-# read of config/generator/common/datasources.yaml resolves -- only the
-# plan files themselves come from the staged-content mount below.
-args=(--rules data-caterer/script/plan-rules.yaml)
+# Repo root is mounted read-only too so validate_plan.py's relative read
+# of datasources.yaml resolves -- only the plan files come from the
+# staged-content mount below. Every plan is named "plan.yaml" (system =
+# parent dir), so the staged copy keeps its relative path under $tmp
+# rather than just its basename, or staging two systems at once would
+# collide on one temp file.
+args=(--rules data-caterer/script/validate/plan-rules.yaml)
 for f in "${staged[@]}"; do
-  base="$(basename "$f")"
-  git show ":$f" > "$tmp/$base"
-  args+=(--file "/staged/$base:$f")
+  mkdir -p "$tmp/$(dirname "$f")"
+  git show ":$f" > "$tmp/$f"
+  args+=(--file "/staged/$f:$f")
 done
 
 status=0
@@ -36,7 +40,7 @@ docker run --rm \
   -v "$tmp":/staged:ro \
   -w /repo \
   "$PYTHON_IMAGE" \
-  python3 data-caterer/script/validate_plan.py "${args[@]}" || status=$?
+  python3 data-caterer/script/validate/validate_plan.py "${args[@]}" || status=$?
 
 if [ "$status" -ne 0 ]; then
   echo "" >&2

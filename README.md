@@ -43,20 +43,20 @@ calling `docker compose` directly.
 
 ```mermaid
 flowchart LR
-    plan["config/generator/plan/&lt;sys&gt;.yaml"] -->|render| rendered["data-caterer/plan/.rendered/&lt;sys&gt;.yaml"]
+    plan["config/generator/plan/&lt;sys&gt;/plan.yaml"] -->|render| rendered["data-caterer/.rendered/plan/&lt;sys&gt;.yaml"]
     rendered --> dc{{"Data Caterer\n(Docker)"}}
     dc -->|FORMAT=csv| csv["CSV files"]
     dc -->|FORMAT=sql| pg[("Ephemeral\nPostgres")]
     pg -->|pg_dump| sql["&lt;sys&gt;.sql"]
-    csv --> pp1["postprocess/csv/&lt;sys&gt;.sh"]
-    pg --> pp2["postprocess/sql/&lt;sys&gt;.sql"]
+    csv --> pp1["plan/&lt;sys&gt;/postprocess/csv.sh"]
+    pg --> pp2["plan/&lt;sys&gt;/postprocess/sql.sql"]
     pp1 --> out1["data/&lt;sys&gt;/"]
     pp2 --> out2["data/&lt;sys&gt;/"]
 ```
 
 Each plan is rendered once per run, then handed to a one-shot Data
 Caterer container. Optional post-processing fixes up anything the plan
-itself can't express (see `config/generator/plan/banking.yaml`'s header
+itself can't express (see `config/generator/plan/banking/plan.yaml`'s header
 comment for the confirmed list of Data Caterer 0.19.1 quirks this works
 around).
 
@@ -81,15 +81,15 @@ system" below).
 
 To add Postgres support for another system, follow `banking.yaml`: one
 `dataSources` entry serves both formats, selected at render time by
-`data-caterer/script/seed.sh`. See that plan's header comment for the
+`data-caterer/script/seed/seed.sh`. See that plan's header comment for the
 full mechanism, and `retail.yaml`'s header comment for a real Spark/JDBC
 gotcha found migrating it (a table can't be named `order` — it's a
 reserved SQL keyword Spark doesn't quote).
 
 ## Adding a system
 
-Drop in `config/generator/plan/<sys>.yaml` — `make seed SYS=<sys>` picks
-it up immediately, no other changes needed. Output paths in the plan
+Drop in `config/generator/plan/<sys>/plan.yaml` — `make seed SYS=<sys>`
+picks it up immediately, no other changes needed. Output paths in the plan
 must write under `/opt/app/data/<sys>/` to match the volume mount in
 `config/docker/docker-compose.seed.yaml`, and every step must declare
 `options` for every format listed in
@@ -106,10 +106,11 @@ resolution — rather than trusting Data Caterer's documentation. See
 `CONTRIBUTING.md`.
 
 If a plan needs fix-up Data Caterer can't express in-plan, add an
-executable `data-caterer/postprocess/csv/<sys>.sh` (and, for `FORMAT=sql`
-support, `data-caterer/postprocess/sql/<sys>.sql`). `make seed` runs it
-automatically after generation, passing the output directory as `$1`. A
-system with nothing to fix up simply has no such script.
+executable `config/generator/plan/<sys>/postprocess/csv.sh` (and, for
+`FORMAT=sql` support, `config/generator/plan/<sys>/postprocess/sql.sql`).
+`make seed` runs it automatically after generation, passing the output
+directory as `$1`. A system with nothing to fix up simply has no such
+script.
 
 ### Validating a plan
 
@@ -140,7 +141,7 @@ FORMAT ?= csv
 seed: ## Populate seed data for a system, e.g. `make seed SYS=banking` (or FORMAT=sql, for systems that support it)
 	@test -n "$(SYS)" || { echo "usage: make seed SYS=<system> [FORMAT=csv|sql]" >&2; exit 1; }
 	git submodule update --init $(SEED_MODULE)
-	@test -f $(SEED_MODULE)/config/generator/plan/$(SYS).yaml || { echo "seed: no plan for SYS=$(SYS)" >&2; exit 1; }
+	@test -f $(SEED_MODULE)/config/generator/plan/$(SYS)/plan.yaml || { echo "seed: no plan for SYS=$(SYS)" >&2; exit 1; }
 	$(MAKE) -C $(SEED_MODULE) seed SYS=$(SYS) FORMAT=$(FORMAT)
 	mkdir -p data
 	cp -r $(SEED_MODULE)/data/$(SYS) data/$(SYS)
@@ -153,28 +154,28 @@ skip it and point consumers at `$(SEED_MODULE)/data/$(SYS)/` directly if
 a stable `data/<sys>` path decoupled from the submodule's location isn't
 needed.
 
-> **Breaking path change**: plan files moved from `data-caterer/plan/` to
-> `config/generator/plan/`. If you vendored this repo before that move,
-> update the `test -f` line above (and anything else referencing
-> `data-caterer/plan/`) to the new path.
+> **Breaking path changes**: plan files moved from `data-caterer/plan/<sys>.yaml`
+> to `config/generator/plan/<sys>/plan.yaml` (each system now owns a
+> directory, with its plan and postprocess scripts together underneath).
+> If you vendored this repo before either move, update the `test -f` line
+> above (and anything else referencing the old paths) accordingly.
 
 ## Layout
 
 | Path | Purpose |
 |------|---------|
-| `config/generator/plan/<sys>.yaml` | Schema, fields, and relationships for one system, as a single `dataSources` entry. Rendered into `data-caterer/plan/.rendered/<sys>.yaml` (gitignored) before every run. |
+| `config/generator/plan/<sys>/plan.yaml` | Schema, fields, and relationships for one system, as a single `dataSources` entry. Rendered into `data-caterer/.rendered/plan/<sys>.yaml` (gitignored) before every run. |
+| `config/generator/plan/<sys>/postprocess/csv.sh` | Optional `FORMAT=csv` fix-up. |
+| `config/generator/plan/<sys>/postprocess/sql.sql` | Optional `FORMAT=sql` fix-up, run via `psql`. |
 | `config/generator/common/datasources.yaml` | Registry of output formats this repo supports and each one's required `options` keys — every plan step must declare all of them. |
+| `config/generator/common/application.conf.template` | Spark runtime defaults, rendered into `data-caterer/.rendered/application.conf` (gitignored) each run. Its `jdbc {}` block is included only for `FORMAT=sql` (stripped entirely, not just unused, for `FORMAT=csv`). |
 | `config/docker/docker-compose.seed.yaml` | One-shot service for `FORMAT=csv`. |
 | `config/docker/docker-compose.postgres.yaml` | Ephemeral Postgres + Data Caterer services for `FORMAT=sql`, torn down every run. |
-| `data-caterer/script/seed.sh` | The `make seed` implementation. |
-| `data-caterer/script/hoist.awk` | Resolves each step's format-specific `options` down to the shape Data Caterer expects. |
-| `data-caterer/script/validate-plan.sh` | The `make validate-plan` implementation — runs `validate_plan.py` in a one-off `python:3.12-slim` container. |
-| `data-caterer/script/plan-rules.yaml` / `validate_plan.py` / `plan_yaml.py` | The rule-based plan lint: declarative rules (YAML), a small stdlib-only YAML-subset loader, and the engine that applies them. |
+| `data-caterer/script/seed/seed.sh` | The `make seed` implementation. |
+| `data-caterer/script/seed/hoist.awk` | Resolves each step's format-specific `options` down to the shape Data Caterer expects. |
+| `data-caterer/script/validate/validate-plan.sh` | The `make validate-plan` implementation — runs `validate_plan.py` in a one-off `python:3.12-slim` container. |
+| `data-caterer/script/validate/plan-rules.yaml` / `validate_plan.py` / `plan_yaml.py` | The rule-based plan lint: declarative rules (YAML), a small stdlib-only YAML-subset loader, and the engine that applies them. |
 | `.githooks/pre-commit` | Runs the same lint against staged plan files. Enabled by `make install-hooks`. |
-| `data-caterer/application.conf.template` | Spark runtime defaults, rendered into `application.conf` (gitignored) each run. |
-| `data-caterer/application-jdbc.conf.template` | Postgres connection details, appended only for `FORMAT=sql`. |
-| `data-caterer/postprocess/csv/<sys>.sh` | Optional `FORMAT=csv` fix-up. |
-| `data-caterer/postprocess/sql/<sys>.sql` | Optional `FORMAT=sql` fix-up, run via `psql`. |
 | `data-caterer/README.md` | Schema notes and every Data Caterer 0.19.1 issue worked around in the `banking` plan. |
 
 ## Known limitations

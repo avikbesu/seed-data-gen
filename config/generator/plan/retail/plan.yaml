@@ -12,62 +12,51 @@
 #                        employee
 #   order_item       -- 1-5 product lines per order, deterministically,
 #                        not via `foreignKeys` (see that step's comment)
-#   invoice          -- 1:1 with order; amounts recomputed by
-#                        postprocess/csv/retail.sh (FORMAT=csv) or
-#                        postprocess/sql/retail.sql (FORMAT=sql) from
-#                        order_item totals
+#   invoice          -- 1:1 with order; amounts recomputed by this
+#                        directory's postprocess/csv.sh (FORMAT=csv) or
+#                        postprocess/sql.sql (FORMAT=sql) from order_item
+#                        totals
 #
 # Date/timestamp fields are Australia/Sydney wall-clock time. No
 # sinkOptions.seed is set -- every run produces a different dataset.
 #
-# **Two formats, one dataSources entry**: same mechanism as
-# banking.yaml -- `connection.type: "@@CONN_TYPE@@"` and each step's
-# `options: {csv: {...}, sql: {...}}` are resolved at render time by
-# data-caterer/script/seed.sh + hoist.awk, not duplicated. dataSources.name
-# is "retail" (not "retail_csv" as before this was dual-format), matching
-# `@@SYS@@` so application-jdbc.conf.template's generic `jdbc { "@@SYS@@"
-# {...} }` block resolves for FORMAT=sql. See banking.yaml's own header
-# comment for the full mechanism and the real Data Caterer bugs behind it.
+# **Two formats, one dataSources entry**: same mechanism as banking.yaml
+# -- `connection.type: "@@CONN_TYPE@@"` and each step's `options: {csv:
+# {...}, sql: {...}}` resolved at render time, not duplicated.
+# dataSources.name is "retail", matching `@@SYS@@`, so
+# application.conf.template's generic `jdbc { "@@SYS@@" {...} }` block
+# resolves for FORMAT=sql. See banking.yaml's header for the full
+# mechanism and its confirmed bugs.
 #
-# Unlike banking.yaml, this plan uses NO `foreignKeys` block at all --
-# every many-to-one reference is a deterministic hash of the row's own
-# `seq` into the parent's `<PREFIX><8-digit-seq>` id format (different
-# prime multipliers per field so pairings don't look cyclic), a matching
+# Unlike banking.yaml, this plan has NO `foreignKeys` block -- every
+# many-to-one reference is a deterministic hash of the row's own `seq`
+# into the parent's `<PREFIX><8-digit-seq>` id format (different prime
+# multipliers per field so pairings don't look cyclic), a matching
 # `incremental` sequence for genuine 1:1s (invoice <-> order), or (for
 # order_item's real one-to-many) a closed-form cumulative-sum encoding --
-# see that step's own comment.
+# see that step's comment. order -> order_item originally tried real
+# `foreignKeys` + `count.perField`: it expanded row count, but its
+# INDEX-BASED cardinality only ever covered ~25-27% of the 2000 orders
+# (confirmed by testing), so order_item was redesigned with no
+# `foreignKeys` at all, for real 1-5-item variety and 100% coverage.
 #
-# order -> order_item originally tried real `foreignKeys` +
-# `count.perField` (banking.yaml bug 2's fix). It does expand row count,
-# but regardless of `count.records` or the `perField` range, the
-# INDEX-BASED cardinality strategy only ever covered ~25-27% of the 2000
-# orders (confirmed by testing several combinations) -- worse than
-# banking's transactions, so order_item was redesigned with no
-# `foreignKeys` at all instead, for real 1-5-item variety AND 100%
-# coverage.
+# A field's `sql` can only see other fields in its own row/step (same
+# limitation as banking.yaml bug 5) -- so order_item.unit_price and
+# invoice.subtotal_amount are random placeholders here, corrected by
+# this directory's postprocess/csv.sh or postprocess/sql.sql after
+# generation.
 #
-# A field's `sql` can only see other fields in its OWN row of its OWN
-# step (same class of limitation as banking.yaml bug 5) -- so
-# order_item.unit_price/invoice.subtotal_amount are generated as random
-# placeholders here and corrected by postprocess/csv/retail.sh
-# (FORMAT=csv) or postprocess/sql/retail.sql (FORMAT=sql, via psql)
-# after generation.
+# **Confirmed Spark JDBC bug found adding FORMAT=sql**: the `order`
+# step's `options.sql.dbtable` can't be `"order"` -- Spark's Postgres
+# writer emits it unquoted, and `order` is a reserved word
+# (`ERROR: syntax error at or near "order"`). Worked around by naming
+# the table `orders` instead; the CSV file stays `order.csv`.
 #
-# **Real Data Caterer/Spark JDBC bug found adding FORMAT=sql here**: the
-# `order` step's `options.sql.dbtable` can't be `"order"` -- Spark's
-# Postgres JDBC writer emits an unquoted `CREATE TABLE order (...)`,
-# which Postgres rejects (`order` is a reserved word): confirmed
-# directly (`ERROR: syntax error at or near "order"`). Worked around by
-# naming the table `orders` instead -- only the SQL table name, the CSV
-# file stays `order.csv`.
-#
-# Verified directly against the real image (`make seed SYS=retail` and
-# `make seed SYS=retail FORMAT=sql`), not assumed: every FK-shaped value
-# resolves to a real parent row, row counts land where expected, and
-# (after the postprocess step runs) every order_item's line_total
-# matches its product's real price x quantity, and every invoice's
-# subtotal_amount matches its order's real order_item sum -- in both
-# formats.
+# Verified against the real image in both formats, not assumed: every
+# FK-shaped value resolves to a real parent row, row counts land where
+# expected, and (after the postprocess step runs) every order_item's
+# line_total matches its product's real price x quantity, and every
+# invoice's subtotal_amount matches its order's real order_item sum.
 version: "1.0"
 name: "retail_sample_data"
 description: "Simplified retail store sample data with intact customer/supplier/product/order relationships"

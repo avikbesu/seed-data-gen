@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Post-processing for SYS=retail, run automatically by
-# data-caterer/script/seed.sh after Data Caterer finishes (FORMAT=csv).
+# data-caterer/script/seed/seed.sh after Data Caterer finishes (FORMAT=csv).
 #
 # A field's `sql` can only see other fields in its own row of its own
-# step -- it can't reach into another step's rows (see plan/retail.yaml's
+# step -- it can't reach into another step's rows (see ../plan.yaml's
 # file-level comment). So order_item.unit_price/line_total and
 # invoice.subtotal_amount/tax_amount/total_amount are generated as
 # independently-random placeholders; this script corrects them:
@@ -19,7 +19,7 @@
 #      transactions.accounts_FK -- see that plan's "known limitation of
 #      the workaround" section) gets a $0 subtotal, not an error.
 #
-# Usage: retail.sh <output-dir>   (e.g. data/retail, containing that
+# Usage: csv.sh <output-dir>   (e.g. data/retail, containing that
 # run's product.csv, order_item.csv and invoice.csv)
 set -euo pipefail
 

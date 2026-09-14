@@ -1,19 +1,18 @@
 # One-shot CSV generator (FORMAT=csv), parameterized by SYS. Run via
-# `make seed SYS=<sys>` from the repo root, or `SYS=<sys> docker compose
-# -f config/docker/docker-compose.seed.yaml run --rm data-caterer` directly.
+# `make seed SYS=<sys>`, or `SYS=<sys> docker compose -f
+# config/docker/docker-compose.seed.yaml run --rm data-caterer` directly.
 # No seed is set in any plan, so every run produces a different dataset.
 #
-# APPLICATION_CONFIG_PATH is the mechanism that actually selects the
-# plan (application.conf.template's planFilePath, rendered per-run).
-# PLAN_FILE_PATH is set to the same value too, but on its own does NOT
-# override that when a concrete config file is supplied (confirmed
-# directly) -- kept in case a future Data Caterer version honors it.
+# APPLICATION_CONFIG_PATH is what actually selects the plan
+# (application.conf.template's planFilePath, rendered per-run).
+# PLAN_FILE_PATH alone does NOT override that (confirmed) -- set anyway
+# in case a future Data Caterer version honors it.
 services:
   data-caterer:
     image: "datacatering/data-caterer:0.19.1"
     environment:
-      APPLICATION_CONFIG_PATH: "/opt/app/custom/application.conf"
-      PLAN_FILE_PATH: "/opt/app/custom/plan/.rendered/${SYS:?SYS is required, e.g. SYS=banking}.yaml"
+      APPLICATION_CONFIG_PATH: "/opt/app/custom/.rendered/application.conf"
+      PLAN_FILE_PATH: "/opt/app/custom/.rendered/plan/${SYS:?SYS is required, e.g. SYS=banking}.yaml"
       ENABLE_GENERATE_DATA: "true"
       ENABLE_RECORD_TRACKING: "false"
       ENABLE_GENERATE_PLAN_AND_TASKS: "false"

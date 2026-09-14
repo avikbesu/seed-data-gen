@@ -1,0 +1,95 @@
+# Shared defaults for every system's seed job. seed.sh renders this into
+# .rendered/application.conf each run, substituting @@SYS@@ -- required
+# because PLAN_FILE_PATH (also set, in docker-compose) does NOT override
+# folders.planFilePath below on its own (confirmed: with two plan files
+# present, Data Caterer always loaded the file named here, ignoring
+# PLAN_FILE_PATH, and crashed writing into the other system's dir).
+#
+# Every top-level block must be present even for a plain CSV run --
+# mirrors Data Caterer's own example config, trimmed of unused
+# Kafka/Cassandra/etc. blocks. Each plan's `config:` overrides
+# flags/generation/folders for that run.
+#
+# The `jdbc {}` block at the bottom (between the @@JDBC_BLOCK_START@@ /
+# @@JDBC_BLOCK_END@@ markers) is FORMAT=sql-only. seed.sh deletes the
+# whole marked range for FORMAT=csv -- not just leaves it unused, since a
+# jdbc {} block's mere presence marks its matching dataSource as
+# jdbc-shaped regardless of connection.type (confirmed) -- and deletes
+# only the two marker lines for FORMAT=sql, keeping the block. A plan's
+# connection.url/user/password/driver are never honored if inlined in
+# the YAML (confirmed); Data Caterer only reads them from here, keyed by
+# the plan's dataSources.name, which by convention equals @@SYS@@.
+flags {
+    enableCount = true
+    enableGenerateData = true
+    enableGeneratePlanAndTasks = false
+    enableRecordTracking = false
+    enableDeleteGeneratedRecords = false
+    enableFailOnError = true
+    enableUniqueCheck = true
+    enableSinkMetadata = false
+    enableSaveReports = false
+    enableValidation = false
+    enableGenerateValidations = false
+    enableAlerts = false
+}
+
+folders {
+    generatedPlanAndTaskFolderPath = "/opt/app/custom/generated"
+    planFilePath = "/opt/app/custom/.rendered/plan/@@SYS@@.yaml"
+    taskFolderPath = "/opt/app/custom/task"
+    validationFolderPath = "/opt/app/custom/validation"
+    recordTrackingFolderPath = "/opt/app/custom/recordTracking"
+    recordTrackingForValidationFolderPath = "/opt/app/custom/validation/recordTracking"
+    generatedReportsFolderPath = "/opt/app/data/@@SYS@@/report"
+}
+
+metadata {
+    numRecordsFromDataSource = 10000
+    numRecordsForAnalysis = 10000
+    oneOfDistinctCountVsCountThreshold = 0.1
+    oneOfMinCount = 1000
+    numGeneratedSamples = 10
+}
+
+generation {
+    numRecordsPerBatch = 100000
+}
+
+validation {
+    numSampleErrorRecords = 5
+    enableDeleteRecordTrackingFiles = true
+}
+
+alert {
+    triggerOn = "all"
+    slackAlertConfig {
+        token = ""
+        channels = []
+    }
+}
+
+runtime {
+    master = "local[*]"
+    config {
+        "spark.driver.memory" = "2g"
+        "spark.executor.memory" = "2g"
+        "spark.sql.shuffle.partitions" = "4"
+    }
+}
+
+csv {
+    csv {
+    }
+}
+
+# @@JDBC_BLOCK_START@@
+jdbc {
+    "@@SYS@@" {
+        url = "jdbc:postgresql://postgres:5432/@@SYS@@"
+        user = "postgres"
+        password = "postgres"
+        driver = "org.postgresql.Driver"
+    }
+}
+# @@JDBC_BLOCK_END@@

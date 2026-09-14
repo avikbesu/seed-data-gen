@@ -4,7 +4,7 @@
 Not a general YAML parser -- these are line/indentation-driven checks
 tailored to the plan shape this repo's plans use (2-space indent,
 `dataSources: -> steps: -> fields:` all as `- name: "..."` lists -- see
-config/generator/plan/banking.yaml / retail.yaml). Rules live in
+config/generator/plan/banking/plan.yaml / retail/plan.yaml). Rules live in
 plan-rules.yaml (next to this file, loaded via plan_yaml.py); see that
 file's header comment and CONTRIBUTING.md's "Writing a plan file" section
 for what each rule encodes and why.
@@ -64,7 +64,11 @@ class Plan:
     def __init__(self, label, lines):
         self.label = label
         self.lines = lines  # 0-indexed list of raw lines (no line numbers)
-        self.sys = re.sub(r"\.yaml$", "", label.rsplit("/", 1)[-1])
+        # Every plan lives at .../<sys>/plan.yaml, so sys is the parent
+        # directory name, not the filename. Falls back to the bare
+        # filename (minus .yaml) if label has no directory component.
+        parts = label.split("/")
+        self.sys = parts[-2] if len(parts) >= 2 else re.sub(r"\.yaml$", "", parts[-1])
         self.datasources = self._parse_datasources()
         self.fk_entries = self._parse_foreign_keys()
 

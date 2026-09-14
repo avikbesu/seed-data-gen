@@ -7,11 +7,13 @@ from the repo root.
 
 ## Layout
 
-- `application.conf.template` -- Spark runtime defaults (HOCON), shared
-  by every system, rendered into `application.conf` (gitignored) each run
-  with `@@SYS@@` substituted. `application-jdbc.conf.template` adds the
-  real Postgres connection details, appended only for `FORMAT=sql`.
-- `../config/generator/plan/banking.yaml` -- the schema (7 tables: `party`, `party_address`,
+- `../config/generator/common/application.conf.template` -- Spark runtime
+  defaults (HOCON), shared by every system, rendered into
+  `.rendered/application.conf` (gitignored) each run with `@@SYS@@`
+  substituted. Its `jdbc {}` block (real Postgres connection details) is
+  kept only for `FORMAT=sql` and stripped entirely -- not just left
+  unused -- for `FORMAT=csv`.
+- `../config/generator/plan/banking/plan.yaml` -- the schema (7 tables: `party`, `party_address`,
   `party_contact`, `party_profile`, `accounts`, `account_contracts`,
   `transactions`), fields, and relationships, for both formats. See that
   file's own header comment for the full design rationale, every real
@@ -20,9 +22,10 @@ from the repo root.
   `party_address` is a standalone 20,000-row pool (not 1:1 with `party`'s
   500 rows), weighted AU 60% / NZ 30% / {US, UK, NL, IN} 10% split evenly.
   `account_contracts.contract_role` is loan-aware (`Guarantor` only for
-  Loan accounts) -- enforced by `postprocess/csv/banking.sh` or
-  `postprocess/sql/banking.sql` after generation, not by the plan itself
-  (bug 5 below).
+  Loan accounts) -- enforced by
+  `../config/generator/plan/banking/postprocess/csv.sh` or
+  `../config/generator/plan/banking/postprocess/sql.sql` after
+  generation, not by the plan itself (bug 5 below).
 
 Output lands in `data/banking/` (gitignored) -- CSVs for `FORMAT=csv`, one
 `banking.sql` dump for `FORMAT=sql`.
@@ -64,9 +67,10 @@ present in the official docs' own examples:
    it after every `sql` field has already evaluated. Tried making
    `contract_role` loan-aware this way; never fired.
    Can't be fixed in-plan -- `contract_role` is a flat weighted pick,
-   fixed up after generation by `postprocess/csv/banking.sh` (recovering
+   fixed up after generation by
+   `../config/generator/plan/banking/postprocess/csv.sh` (recovering
    `account_type` from a 2-letter code in `accounts.id`) or
-   `postprocess/sql/banking.sql` (a real SQL join).
+   `../config/generator/plan/banking/postprocess/sql.sql` (a real SQL join).
 
 6. **A string literal in one field's `sql` exactly matching another
    field's name in the same step gets corrupted** -- a `'merchant'` CASE

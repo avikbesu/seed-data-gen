@@ -1,6 +1,6 @@
--- SQL equivalent of postprocess/csv/banking.sh's awk fixup, run by
--- data-caterer/script/seed.sh against the live database before pg_dump
--- (bug 5 in plan/banking.yaml -- `sql` can't see a foreignKeys-populated
+-- SQL equivalent of this directory's csv.sh awk fixup, run by
+-- data-caterer/script/seed/seed.sh against the live database before pg_dump
+-- (bug 5 in ../plan.yaml -- `sql` can't see a foreignKeys-populated
 -- sibling field). Swap Power of Attorney -> Guarantor wherever the
 -- contract's parent account is a Loan.
 UPDATE account_contracts ac

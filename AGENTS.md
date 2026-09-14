@@ -10,7 +10,7 @@ adds what those don't cover.
 ## Agent-specific notes
 
 - There is no test suite. `make validate-plan SYS=<sys>` is a fast lint
-  (rules in `data-caterer/script/plan-rules.yaml`, applied by
+  (rules in `data-caterer/script/validate/plan-rules.yaml`, applied by
   `validate_plan.py` in a one-off `python:3.12-slim` container — see
   CLAUDE.md's "Writing or editing a plan file") — it catches known-bad
   patterns but is not verification. Treat `make seed SYS=<sys>` against the real

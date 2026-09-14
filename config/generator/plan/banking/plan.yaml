@@ -17,83 +17,60 @@
 # sinkOptions.seed is set on purpose -- every run produces a different
 # dataset.
 #
-# **Two formats, one dataSources entry**: `make seed SYS=banking`
-# (FORMAT=csv, default) writes CSVs; `FORMAT=sql` generates the same data
-# into an ephemeral Postgres and pg_dumps it (see
-# data-caterer/script/seed.sh). Every field is defined exactly once; only
-# `connection.type: "@@CONN_TYPE@@"` and each step's `options: {csv:
-# {...}, sql: {...}}` are resolved at render time, not duplicated:
+# **Two formats, one dataSources entry**: `connection.type: "@@CONN_TYPE@@"`
+# and each step's `options: {csv: {...}, sql: {...}}` are resolved at
+# render time by data-caterer/script/seed/seed.sh + hoist.awk, not
+# duplicated -- Data Caterer's YAML parser has no anchors/aliases
+# (confirmed: `fields: &x`/`*x` fails to deserialize), so this is the only
+# way to avoid two hand-synced copies of every field.
 #
-#   - seed.sh substitutes `@@CONN_TYPE@@` to `"csv"`/`"jdbc"` (Spark's
-#     real JDBC format name -- `"postgres"` is not real and fails with
-#     `ClassNotFoundException: postgres.DefaultSource`, confirmed
-#     directly). Real connection details can't be inlined here at all
-#     (confirmed: `key not found: driver` then `Option 'url' is
-#     required`) -- they live in application.conf.template's `jdbc {
-#     banking {...} }` block, merged in by matching this entry's `name`.
+#   - seed.sh maps `@@CONN_TYPE@@` to `"csv"`/`"jdbc"` (Spark's real JDBC
+#     format name -- `"postgres"` isn't real). Connection details can't
+#     be inlined in the plan at all (confirmed: `Option 'url' is
+#     required`); they live in application.conf.template's `jdbc {}`
+#     block, matched by this entry's `name`.
 #
-#   - `data-caterer/script/hoist.awk` drops the inactive format's whole
-#     `csv:`/`sql:` block and de-indents the active one's children up to
-#     be direct children of `options:`, the flat shape Data Caterer
-#     expects. This de-nesting is necessary, not cosmetic: a `jdbc` step
-#     left with a `path`/`header` key present alongside `dbtable` doesn't
-#     error, but Data Caterer's file-consolidation logic still fires on
-#     `path` and writes a real, non-empty, spurious CSV file as a side
+#   - hoist.awk fully removes the inactive format's `csv:`/`sql:` block
+#     rather than leaving it unused: a leftover `path`/`header` key next
+#     to `dbtable` makes Data Caterer write a spurious CSV file as a side
 #     effect (confirmed directly).
 #
-# This replaced two fully duplicated `dataSources` entries kept in sync
-# by hand, because Data Caterer's YAML parser doesn't support
-# anchors/aliases (confirmed: even a trivial `fields: &x`/`*x` test fails
-# with `MismatchedInputException: Cannot deserialize List<UnifiedField>
-# from String value`).
+# **Confirmed Data Caterer 0.19.1 bugs found building this plan**:
 #
-# **Real Data Caterer 0.19.1 bugs found while building this plan** (all
-# confirmed directly against the real image, not assumptions):
+#   1. Two `foreignKeys` entries targeting the same step: only the first
+#      applies. Worked around: 1:1s (party <-> contact) use a matching
+#      `incremental` sequence instead; every one-to-many below targets a
+#      distinct step.
 #
-#   1. More than one `foreignKeys` entry targeting the same step: only
-#      the first applies, others fall back to random values.
-#      Worked around: 1:1s (party <-> contact) use matching `incremental`
-#      sequences instead of `foreignKeys`; each one-to-many below targets
-#      a distinct step.
+#   2. `cardinality` on `foreignKeys` doesn't expand child row count --
+#      collapses to 1:1. Worked around: `count.perField` instead (see
+#      data-caterer/README.md's "known limitation" -- one flat count per
+#      parent, not a real range).
 #
-#   2. `cardinality` (`min`/`max`/`ratio`) on `foreignKeys` doesn't expand
-#      the child's row count -- collapses to 1:1 regardless.
-#      Worked around: `count.perField` on the child step instead (works,
-#      though see "known limitation" in data-caterer/README.md -- it's
-#      one flat count per parent, not a real range, for either format).
+#   3. Adding a `foreignKeys` entry targeting one step inflates every
+#      OTHER FK-target step's row count to match its source (giving
+#      `party` a real FK to `party_address` ballooned party to 20,000
+#      rows). Worked around: `party.address_id` is a deterministic SQL
+#      hash of `seq` into `party_address`'s id format, not a real FK.
 #
-#   3. Adding any `foreignKeys` entry targeting a step inflates every
-#      OTHER foreignKeys-target step's row count to match its source
-#      step (found giving `party` a real FK to the 20,000-row
-#      `party_address` pool: party ballooned to 20,000 rows, unrelated
-#      account_contracts/transactions to 60,000 each).
-#      Worked around: `party.address_id` is a deterministic SQL hash of
-#      `seq` into `party_address`'s `ADR<8-digit-seq>` id format instead.
+#   4. Weighted `oneOf` (`"value->0.35"`) always returns the last
+#      alternative, every row. Worked around: a hidden `<field>_bucket`
+#      double (`omit: true`) + `sql` `CASE` on cumulative thresholds.
 #
-#   4. A weighted `oneOf` (`"value->0.35"`) always returns the LAST
-#      alternative, every row (confirmed via generated-value distribution).
-#      Worked around: a hidden `<field>_bucket` double (`omit: true`) +
-#      `sql` `CASE` on cumulative thresholds instead.
-#
-#   5. A field's `sql` can't see another same-step field's real value
-#      once that field is populated via `foreignKeys` (evaluated before
-#      the FK pass overwrites it) -- tried making
-#      account_contracts.contract_role loan-aware this way; never fired.
-#      Can't be fixed in-plan -- contract_role is a flat weighted pick,
-#      fixed up after generation by
-#      data-caterer/postprocess/csv/banking.sh (FORMAT=csv) or
-#      data-caterer/postprocess/sql/banking.sql (FORMAT=sql, via psql).
+#   5. A field's `sql` can't see a same-step field once it's populated via
+#      `foreignKeys` -- tried making contract_role loan-aware this way;
+#      never fired. Fixed up post-generation instead, by this directory's
+#      postprocess/csv.sh or postprocess/sql.sql.
 #
 #   6. A string literal in one field's `sql` exactly matching another
-#      field's name in the same step gets corrupted (found: a `'merchant'`
-#      CASE branch became the literal text `_temp_merchant` once a field
-#      was also named `merchant`).
+#      field's name corrupts it (a `'merchant'` CASE branch became the
+#      literal `_temp_merchant` once a field was named `merchant`).
 #      Worked around: renamed the field to `merchant_name`.
 #
-# `party_address` is a standalone 20,000-row pool (party's 500 rows share
-# addresses via the bug-3 workaround, not a real relationship). `accounts.id`
-# embeds a 2-letter account_type code after the `ACC` prefix purely so the
-# postprocess step (bug 5) can recover it without a real join.
+# `party_address` is a 20,000-row pool party shares via the bug-3
+# workaround, not a real relationship. `accounts.id` embeds a 2-letter
+# account_type code so the postprocess step (bug 5) can recover it
+# without a join.
 version: "1.0"
 name: "banking_sample_data"
 description: "Simplified banking system sample data with intact party/account/transaction relationships"

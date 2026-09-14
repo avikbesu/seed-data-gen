@@ -16,10 +16,11 @@ For full agent-facing guidance (build/run/verify, layout, gotchas), see
   0.19.1](https://data.catering/0.19.1/), driven entirely by Docker — no
   other dependency. Meant to be dropped into other repos as a git
   submodule (see README.md's "As a submodule" section).
-- Each dataset is a "system": `config/generator/plan/<sys>.yaml` plus an
-  optional `postprocess/csv/<sys>.sh` (and, for `banking`,
-  `postprocess/sql/<sys>.sql` for `FORMAT=sql`). Two exist today:
-  `banking` and `retail`. Adding one is just dropping in a new plan file.
+- Each dataset is a "system", its own directory:
+  `config/generator/plan/<sys>/plan.yaml` plus an optional
+  `config/generator/plan/<sys>/postprocess/csv.sh` (and, for `banking`,
+  `postprocess/sql.sql` for `FORMAT=sql`). Two exist today: `banking` and
+  `retail`. Adding one is just dropping in a new plan directory.
   `config/generator/common/datasources.yaml` is a separate, global
   registry of which output formats this repo supports at all (currently
   `csv`/`sql`) and each one's required `options` keys — every step in
@@ -35,15 +36,15 @@ For full agent-facing guidance (build/run/verify, layout, gotchas), see
   ephemeral Postgres and `pg_dump`s it, from the same `banking.yaml`
   `dataSources` entry (no duplicated fields/`foreignKeys`) via
   `connection.type`/`options: {csv:, sql:}` placeholders that
-  `data-caterer/script/seed.sh` + `hoist.awk` resolve at render time. See
+  `data-caterer/script/seed/seed.sh` + `hoist.awk` resolve at render time. See
   `banking.yaml`'s header comment before editing anything under `options:`.
-- `data/`, `data-caterer/application.conf`, and
-  `data-caterer/plan/.rendered/` are gitignored/regenerated every run —
+- `data/` and `data-caterer/.rendered/` (per-run `application.conf` +
+  rendered `plan/<sys>.yaml`) are gitignored/regenerated every run —
   never commit them.
 
 ## Writing or editing a plan file
 
-Before writing to `config/generator/plan/<sys>.yaml`, apply this
+Before writing to `config/generator/plan/<sys>/plan.yaml`, apply this
 checklist — each item encodes a confirmed Data Caterer 0.19.1 bug or a
 convention both existing plans follow (full rationale in
 `CONTRIBUTING.md`'s "Writing a plan file" section):

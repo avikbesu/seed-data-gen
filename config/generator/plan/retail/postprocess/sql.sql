@@ -1,7 +1,7 @@
--- SQL equivalent of postprocess/csv/retail.sh's awk fixups, run by
--- data-caterer/script/seed.sh against the live database before pg_dump
+-- SQL equivalent of this directory's csv.sh awk fixups, run by
+-- data-caterer/script/seed/seed.sh against the live database before pg_dump
 -- (same `sql` same-row/same-step limitation as banking.yaml bug 5 --
--- see plan/retail.yaml's file-level comment):
+-- see ../plan.yaml's file-level comment):
 --
 --   1. order_item.unit_price is overwritten with that row's real
 --      product.price (joined on product_id), and line_total recomputed
@@ -11,7 +11,7 @@
 --      correct, per step 1). Every invoice is zeroed first so an order
 --      with no order_item rows at all (same documented limitation as
 --      banking's transactions.accounts_FK) gets $0, not an untouched
---      random placeholder -- matching postprocess/csv/retail.sh exactly.
+--      random placeholder -- matching this directory's csv.sh exactly.
 
 -- ROUND(double precision, integer) has no overload in Postgres (only
 -- round(double precision) and round(numeric, integer) do) -- confirmed
