@@ -1,0 +1,29 @@
+name: Validate plans
+
+on:
+  pull_request:
+    paths:
+      - "config/generator/plan/**"
+      - "config/generator/common/**"
+      - "data-caterer/script/validate/**"
+      - "Makefile"
+      - ".github/workflows/validate-plan.yml"
+  push:
+    branches: [main]
+    paths:
+      - "config/generator/plan/**"
+      - "config/generator/common/**"
+      - "data-caterer/script/validate/**"
+      - "Makefile"
+      - ".github/workflows/validate-plan.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: make validate-plan
