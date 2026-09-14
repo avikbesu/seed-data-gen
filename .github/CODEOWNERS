@@ -1,0 +1,3 @@
+# Required by branch protection's "require code owner reviews" setting
+# on main -- without this file that setting has no one to assign.
+* @avikbesu
